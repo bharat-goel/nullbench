@@ -73,13 +73,26 @@ test("a missing binary returns code -1 rather than crashing the run", async () =
 });
 
 test("concurrent stub invocations do not lose updates to the shared state file", async () => {
-  const plan = { rules: [{ promptIncludes: "x", arm: "any", outs: ["a", "b", "c"] }], default: { outs: ["z"] } };
+  // A longer cycle makes a lost update far less likely to coincidentally land on the
+  // correct value anyway; many batches of high concurrency give the race repeated,
+  // independent chances to be hit. (8 concurrent calls over a 3-element cycle detected
+  // a deliberately-removed lock in only ~60-80% of runs -- not a reliable gate.)
+  const outs = ["a", "b", "c", "d", "e", "f", "g"];
+  const BATCHES = 6;
+  const PER_BATCH = 32;
+  const plan = { rules: [{ promptIncludes: "x", arm: "any", outs }], default: { outs: ["z"] } };
   await withStub(plan, async (dir) => {
-    const calls = Array.from({ length: 8 }, () => invoke({ prompt: "x", cwd: dir, model: "sonnet" }));
-    const results = await Promise.all(calls);
-    const outs = results.map((r) => r.out).sort();
-    // 8 calls cycling through 3 outs: outs[0] and outs[1] three times each, outs[2] twice.
+    const all = [];
+    for (let b = 0; b < BATCHES; b++) {
+      const calls = Array.from({ length: PER_BATCH }, () => invoke({ prompt: "x", cwd: dir, model: "sonnet" }));
+      const results = await Promise.all(calls);
+      all.push(...results.map((r) => r.out));
+    }
+    const total = BATCHES * PER_BATCH;
+    const expectedCounts = new Array(outs.length).fill(0);
+    for (let i = 0; i < total; i++) expectedCounts[i % outs.length]++;
+    const expected = outs.flatMap((o, idx) => Array(expectedCounts[idx]).fill(o)).sort();
     // Order is genuinely nondeterministic under concurrency, so assert the multiset only.
-    assert.deepEqual(outs, ["a", "a", "a", "b", "b", "b", "c", "c"]);
+    assert.deepEqual(all.sort(), expected);
   });
 });
