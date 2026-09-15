@@ -54,6 +54,19 @@ test("the hash is stable across reformatting of nullbench.json", () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
+test("the hash is stable across key reordering and task-array reordering", () => {
+  const dir = makeSuite();
+  const before = loadRegistration(dir).hash;
+  const raw = JSON.parse(readFileSync(join(dir, "nullbench.json"), "utf8"));
+
+  // Reorder top-level keys and reverse the tasks array order.
+  const reordered = { tasks: [...raw.tasks].reverse(), reps: raw.reps, judge_model: raw.judge_model, model: raw.model };
+  writeFileSync(join(dir, "nullbench.json"), JSON.stringify(reordered));
+
+  assert.equal(loadRegistration(dir).hash, before);
+  rmSync(dir, { recursive: true, force: true });
+});
+
 test("the hash changes when a task file changes", () => {
   const dir = makeSuite();
   const before = loadRegistration(dir).hash;
@@ -77,6 +90,16 @@ test("a suite with no harm task is drift, because it cannot be confirmatory", ()
   const dir = makeSuite({ omitHarm: true });
   const r = loadRegistration(dir);
   assert.deepEqual(r.drift.map((d) => d.code), ["NO_HARM_TASK"]);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("a task file that is actually a directory aborts with RegistrationError, not EISDIR", () => {
+  const dir = makeSuite();
+  mkdirSync(join(dir, "tasks", "not-a-file.json"));
+  const raw = JSON.parse(readFileSync(join(dir, "nullbench.json"), "utf8"));
+  raw.tasks.push({ id: "dirtask", file: "tasks/not-a-file.json", sha256: "0".repeat(64), kind: "signal", predict: "helps" });
+  writeFileSync(join(dir, "nullbench.json"), JSON.stringify(raw));
+  assert.throws(() => loadRegistration(dir), RegistrationError);
   rmSync(dir, { recursive: true, force: true });
 });
 

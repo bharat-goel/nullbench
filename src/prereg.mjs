@@ -64,12 +64,12 @@ export function loadRegistration(dir) {
     const abs = join(dir, t.file ?? "");
     if (typeof t.file !== "string" || !existsSync(abs)) { problems.push(`${at}.file "${t.file}" does not exist`); continue; }
 
-    const bytes = readFileSync(abs);
-    let spec;
+    let bytes, spec;
     try {
+      bytes = readFileSync(abs);
       spec = JSON.parse(bytes.toString("utf8"));
     } catch (e) {
-      problems.push(`${at}.file "${t.file}" is not valid JSON: ${e.message}`);
+      problems.push(`${at}.file "${t.file}" could not be read as JSON: ${e.message}`);
       continue;
     }
     tasks.push({ id: t.id, file: t.file, declaredSha: t.sha256, actualSha: sha256(bytes), kind: t.kind, predict: t.predict, spec });
