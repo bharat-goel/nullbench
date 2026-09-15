@@ -63,6 +63,7 @@ test("a judge whose subprocess exits 0 with empty output fails closed", async ()
   const dir = stubbed({ default: { outs: [""] } });
   const r = await runJudge({ task: { prompt: "Q", verify: { rubric: "R" } }, reply: "x", model: "sonnet", cwd: dir });
   assert.equal(r.pass, false);
+  assert.match(r.why, /failed to run/);
   unstub(dir);
 });
 
