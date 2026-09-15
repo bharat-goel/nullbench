@@ -76,20 +76,28 @@ paper), `prereg` (available, but squats a general academic term).
 
 ### 5.1 Pre-registration file
 
-A `nullbench.toml` committed to the repository before the run:
+A `nullbench.json` committed to the repository before the run:
 
-```toml
-model       = "sonnet"
-judge_model = "sonnet"
-reps        = 10
-
-[[task]]
-id      = "ic-smoke-denominator"
-file    = "bench/tasks/ic-smoke-denominator.json"
-sha256  = "a3f1..."
-kind    = "signal"          # signal | harm
-predict = "helps"           # helps | no-effect | harms
+```json
+{
+  "model": "sonnet",
+  "judge_model": "sonnet",
+  "reps": 10,
+  "tasks": [
+    {
+      "id": "ic-smoke-denominator",
+      "file": "bench/tasks/ic-smoke-denominator.json",
+      "sha256": "a3f1...",
+      "kind": "signal",
+      "predict": "helps"
+    }
+  ]
+}
 ```
+
+JSON rather than TOML: Node ships no TOML parser, so TOML would cost this project its
+only runtime dependency — and more importantly, the registration hash in 5.2 requires a
+reproducible canonical serialization. JSON has one (RFC 8785). TOML does not.
 
 Rules:
 
@@ -101,10 +109,11 @@ Rules:
 
 ### 5.2 Registration hash
 
-On run, the runner computes `H = sha256(canonical(nullbench.toml) || sha256(task_1) ||
+On run, the runner computes `H = sha256(canonical(nullbench.json) || sha256(task_1) ||
 ... || sha256(task_n))` over tasks sorted by `id`, and stamps `H` into the report and
-the ledger. Canonicalization is defined in `PROTOCOL.md` so the hash is reproducible
-across formatters.
+the ledger. Canonicalization follows RFC 8785 (sorted keys, no insignificant
+whitespace) and is defined in `PROTOCOL.md` so the hash is reproducible across
+formatters.
 
 ### 5.3 Report classes
 
@@ -144,14 +153,14 @@ append — including voided runs, exploratory runs, and runs whose deltas came o
 ```
 ## 2026-09-14T18:22:07Z · CONFIRMATORY · H=a3f1c2...
 model=sonnet reps=10 runs=60
-ic-smoke-denominator  signal  predict=helps      10% -> 90%   +80.0pp [95% CI +52.1, +93.4]  HIT
-ic-clock-exclusion    signal  predict=helps     100% -> 100%   +0.0pp [95% CI -25.9, +25.9]  MISS (ceiling, both arms)
-ic-noop-routine       harm    predict=no-effect 100% -> 100%   +0.0pp [95% CI -25.9, +25.9]  HIT
+ic-smoke-denominator  signal  predict=helps      10% -> 90%   +80.0pp [95% CI +37.0, +91.6]  HIT
+ic-clock-exclusion    signal  predict=helps     100% -> 100%   +0.0pp [95% CI -27.8, +27.8]  MISS (ceiling, both arms)
+ic-noop-routine       harm    predict=no-effect 100% -> 100%   +0.0pp [95% CI -27.8, +27.8]  HIT
 average across signal tasks: suppressed — 1 of 2 signal tasks non-discriminating
 ```
 
-Interval figures in this example are illustrative of the format. Reference values for
-the interval implementation live in the stats tests (§8), not here.
+Interval figures above are real, computed from the cobra cells they name. They double
+as reference values for the stats tests in §8.
 
 This is the anti-file-drawer mechanism. A published figure means something when a
 reader can see the runs that did not make the README.
