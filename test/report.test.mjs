@@ -131,3 +131,40 @@ test("an exploratory report says why and prints no average", () => {
   assert.match(md, /changed since registration/);
   assert.match(md, /average across signal tasks: suppressed/i);
 });
+
+test("aggregate with zero-n arms does not throw and marks as non-discriminating", () => {
+  const rows = aggregate([], [{ id: "empty", kind: "signal", predict: "helps" }]);
+  const empty = rows.find((r) => r.id === "empty");
+  assert.equal(empty.control.n, 0);
+  assert.equal(empty.treatment.n, 0);
+  assert.equal(empty.discriminating, false, "zero-n arms must not discriminate");
+});
+
+test("harm tasks are excluded from the average even when discriminating", () => {
+  const taskDefs = [
+    { id: "sig1", kind: "signal", predict: "helps" },
+    { id: "sig2", kind: "signal", predict: "helps" },
+    { id: "harm_disc", kind: "harm", predict: "no-effect" },
+  ];
+  const recs = [];
+  // sig1: 2/10 -> 9/10 (discriminates, delta = 0.7)
+  for (let i = 0; i < 2; i++) recs.push({ task: "sig1", cond: "control", pass: true, failed: false });
+  for (let i = 0; i < 8; i++) recs.push({ task: "sig1", cond: "control", pass: false, failed: false });
+  for (let i = 0; i < 9; i++) recs.push({ task: "sig1", cond: "treatment", pass: true, failed: false });
+  recs.push({ task: "sig1", cond: "treatment", pass: false, failed: false });
+  // sig2: 1/10 -> 8/10 (discriminates, delta = 0.7)
+  recs.push({ task: "sig2", cond: "control", pass: true, failed: false });
+  for (let i = 0; i < 9; i++) recs.push({ task: "sig2", cond: "control", pass: false, failed: false });
+  for (let i = 0; i < 8; i++) recs.push({ task: "sig2", cond: "treatment", pass: true, failed: false });
+  for (let i = 0; i < 2; i++) recs.push({ task: "sig2", cond: "treatment", pass: false, failed: false });
+  // harm_disc: 0/10 -> 10/10 (discriminates, delta = 1.0, but is harm so should NOT be averaged)
+  for (let i = 0; i < 10; i++) recs.push({ task: "harm_disc", cond: "control", pass: false, failed: false });
+  for (let i = 0; i < 10; i++) recs.push({ task: "harm_disc", cond: "treatment", pass: true, failed: false });
+
+  const rows = aggregate(recs, taskDefs);
+  const avg = averageDelta(rows);
+
+  assert.equal(avg.suppressed, false, "with 2 discriminating signal tasks, average should print");
+  // Average should be (0.7 + 0.7) / 2 = 0.7, not (0.7 + 0.7 + 1.0) / 3 = 0.8333...
+  assert.ok(Math.abs(avg.value - 0.7) < 1e-9, "average should exclude harm task");
+});

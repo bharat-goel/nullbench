@@ -16,7 +16,7 @@ export function pp(proportion) {
   return `${v >= 0 ? "+" : "-"}${Math.abs(v).toFixed(1)}pp`;
 }
 
-const pct = (p) => `${(p * 100).toFixed(0)}%`;
+const pct = (p) => Number.isNaN(p) ? "—" : `${(p * 100).toFixed(0)}%`;
 const ci = (i) => `[${pp(i.lo)}, ${pp(i.hi)}]`;
 
 export function aggregate(records, tasks) {
@@ -60,7 +60,7 @@ const HEADERS = {
   VOID: "Too few graded runs to report anything.",
 };
 
-export function renderReport({ rows, klass, reasons, warnings = [], registration, requested, hash, canary }) {
+export function renderReport({ rows, klass, reasons, warnings = [], requested, hash, canary }) {
   const L = [];
   L.push(`# nullbench report — ${klass}`, "");
   L.push(HEADERS[klass], "");
