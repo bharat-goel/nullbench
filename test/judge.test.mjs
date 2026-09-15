@@ -51,6 +51,31 @@ test("a judge that returns nothing usable fails closed", async () => {
   unstub(dir);
 });
 
+test("a judge whose subprocess exits non-zero fails closed", async () => {
+  const dir = stubbed({ default: { outs: ["VERDICT: PASS\nREASON: should never be read"], code: 1 } });
+  const r = await runJudge({ task: { prompt: "Q", verify: { rubric: "R" } }, reply: "x", model: "sonnet", cwd: dir });
+  assert.equal(r.pass, false);
+  assert.match(r.why, /failed to run/);
+  unstub(dir);
+});
+
+test("a judge whose subprocess exits 0 with empty output fails closed", async () => {
+  const dir = stubbed({ default: { outs: [""] } });
+  const r = await runJudge({ task: { prompt: "Q", verify: { rubric: "R" } }, reply: "x", model: "sonnet", cwd: dir });
+  assert.equal(r.pass, false);
+  unstub(dir);
+});
+
+test("runJudge never passes a system prompt file, so the skill never reaches the judge", async () => {
+  const dir = stubbed({
+    rules: [{ promptIncludes: "Q", arm: "control", outs: ["VERDICT: PASS\nREASON: blind"] }],
+    default: { outs: ["VERDICT: FAIL\nREASON: fell through to default, a system prompt file was passed"] },
+  });
+  const r = await runJudge({ task: { prompt: "Q", verify: { rubric: "R" } }, reply: "x", model: "sonnet", cwd: dir });
+  assert.equal(r.pass, true);
+  unstub(dir);
+});
+
 test("canaries pass when the judge grades known cases correctly", async () => {
   const dir = stubbed({
     rules: [
