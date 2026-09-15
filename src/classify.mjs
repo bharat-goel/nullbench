@@ -32,7 +32,7 @@ export function classify({ registration, requested, gradedCounts, canaryOk }) {
   const reasons = [];
   for (const d of registration.drift) reasons.push(d.detail);
 
-  const registered = registration.tasks.map((t) => t.id).join(",");
+  const registered = [...registration.tasks.map((t) => t.id)].sort().join(",");
   const ran = [...requested.taskIds].sort().join(",");
   if (registered !== ran) {
     reasons.push(`task set differs from the registration: registered [${registered}], ran [${ran}]`);
