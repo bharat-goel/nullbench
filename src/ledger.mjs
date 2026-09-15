@@ -6,7 +6,7 @@
 // that they had happened. A published delta means something when a reader can see the
 // runs that did not make the README.
 
-import { appendFileSync, existsSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, writeFileSync, readFileSync } from "node:fs";
 import { pp, averageDelta } from "./report.mjs";
 
 const HEADING = `# Run ledger
@@ -27,7 +27,14 @@ function score(row) {
 }
 
 export function appendEntry(path, { stamp, klass, hash, requested, rows, reasons }) {
-  if (!existsSync(path)) writeFileSync(path, HEADING);
+  if (!existsSync(path)) {
+    writeFileSync(path, HEADING);
+  } else {
+    const content = readFileSync(path, "utf8");
+    if (!content.includes("# Run ledger")) {
+      writeFileSync(path, HEADING + content);
+    }
+  }
 
   const L = [];
   L.push("");
