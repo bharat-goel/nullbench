@@ -1,0 +1,14 @@
+{
+  "name": "nullbench",
+  "version": "0.1.0",
+  "description": "A pre-registration protocol for Claude skill evaluation",
+  "type": "module",
+  "license": "MIT",
+  "engines": { "node": ">=22" },
+  "bin": { "nullbench": "./bin/nullbench.mjs" },
+  "files": ["bin", "src", "PROTOCOL.md", "FAILURES.md"],
+  "scripts": {
+    "test": "node --test 'test/*.test.mjs' 'test/e2e/*.test.mjs'",
+    "verify:live": "node --test 'test/live/*.test.mjs'"
+  }
+}
