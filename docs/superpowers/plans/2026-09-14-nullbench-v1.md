@@ -16,7 +16,7 @@
 - **ESM only.** `"type": "module"`, all sources `.mjs`, `import`/`export`, never `require`.
 - **Node >= 22**, declared in `engines`.
 - **No network in CI tests.** Every test under `test/` except `test/live/` must pass with no network and no API key. Tests invoke the stub via `NULLBENCH_CLAUDE_BIN`.
-- **Every delta printed anywhere carries its interval.** No bare point estimates in any output path — report, ledger, CLI, or README. This is the project's core promise; a code review that finds a naked delta rejects the task.
+- **Every per-task delta printed anywhere carries its interval.** No bare point estimates in any output path — report, ledger, CLI, or README. The one exception is the average across signal tasks, which is a mean over heterogeneous quantities and has no defined interval: it must be printed with an explicit `no interval` marker, never bare. This is the project's core promise; a code review that finds a naked delta rejects the task.
 - **Proportions internally, percentage points at the edge.** All statistics functions take and return proportions in `[0, 1]`. Only `report.mjs` and `ledger.mjs` multiply by 100 and append `pp`.
 - **Runs never execute inside the repository.** Every subject invocation uses a fresh `mkdtemp` directory outside the project and `--setting-sources project`. This is spec §6 entry 5; violating it silently destroys every measurement.
 - **Naming:** the tool is `nullbench`, lowercase, one word, everywhere.
@@ -40,7 +40,7 @@
 | `src/ledger.mjs` | Append-only ledger writer. |
 | `src/cli.mjs` | Flag parsing, cost preflight, orchestration, exit codes. |
 | `bin/nullbench.mjs` | Shebang entry point; imports `src/cli.mjs`. |
-| `test/stub/claude.mjs` | Fake `claude` binary; replays fixtures. Test-only. |
+| `tools/stub-claude.mjs` | Fake `claude` binary; replays fixtures. Outside `test/` so bare `node --test` never loads or executes it. |
 | `examples/cobra/` | cobra's suite as the worked example. |
 | `FAILURES.md`, `PROTOCOL.md`, `README.md`, `ATTRIBUTION.md`, `LICENSE` | The published contribution. |
 
@@ -77,8 +77,8 @@ Statistics come first because every later module formats their output, and becau
   "bin": { "nullbench": "./bin/nullbench.mjs" },
   "files": ["bin", "src", "PROTOCOL.md", "FAILURES.md"],
   "scripts": {
-    "test": "node --test test/",
-    "verify:live": "node --test test/live/"
+    "test": "node --test 'test/*.test.mjs' 'test/e2e/*.test.mjs'",
+    "verify:live": "node --test 'test/live/*.test.mjs'"
   }
 }
 ```
@@ -675,7 +675,9 @@ Expected: FAIL — module not found.
 // A reply that says "don't investigate yet, stabilise first" mentions diagnosis before
 // rollback while advocating the opposite. Naive ordering marks the better answer wrong.
 const NEGATIONS = [
-  "don't", "do not", "not ", "never", "avoid", "rather than", "instead of",
+  // "not " is word-anchored with a leading space: without it, "you cannot roll back"
+  // reads as a negated rollback because "cannot " contains "not ".
+  "don't", "do not", " not ", "never", "avoid", "rather than", "instead of",
   "without", "no need to", "before you", "premature", "resist", "skip",
   "hold off", "defer", "later", "only once", "only after", "after you",
 ];
@@ -690,7 +692,13 @@ function firstUnnegated(hay, pats, window = 45) {
     for (;;) {
       const i = hay.indexOf(needle, from);
       if (i === -1) break;
-      const ctx = hay.slice(Math.max(0, i - window), i);
+      // Look back only as far as the current sentence. Without this, "Don't
+      // investigate yet. Roll back, then investigate." has its rollback treated as
+      // negated by the "don't" in the previous sentence, and the reply scores as
+      // proposing no stabilising action at all.
+      let ctx = hay.slice(Math.max(0, i - window), i);
+      const bound = Math.max(ctx.lastIndexOf("."), ctx.lastIndexOf("!"), ctx.lastIndexOf("?"), ctx.lastIndexOf("\n"));
+      if (bound !== -1) ctx = ctx.slice(bound + 1);
       if (!NEGATIONS.some((n) => ctx.includes(n))) {
         if (best === -1 || i < best) best = i;
         break;
@@ -755,7 +763,7 @@ Every later task depends on being able to run the suite without spending money. 
 
 **Files:**
 - Create: `src/claude.mjs`
-- Create: `test/stub/claude.mjs`
+- Create: `tools/stub-claude.mjs`
 - Test: `test/claude.test.mjs`
 
 **Interfaces:**
@@ -765,7 +773,7 @@ Every later task depends on being able to run the suite without spending money. 
   - `binaryPath() -> string` — `process.env.NULLBENCH_CLAUDE_BIN || "claude"`.
 
 **Stub contract** (used by every later test, so it is specified exactly here):
-`test/stub/claude.mjs` is an executable Node script. It reads:
+`tools/stub-claude.mjs` is an executable Node script. It reads:
 - `NULLBENCH_STUB_PLAN` — path to a JSON file `{ "rules": [ { "promptIncludes": string, "arm": "control"|"treatment"|"any", "outs": string[], "code": number? } ], "default": { "outs": string[], "code": number? } }`
 - `NULLBENCH_STUB_STATE` — path to a scratch JSON file the stub uses to advance through `outs` per rule, so repeated calls cycle deterministically.
 
@@ -784,7 +792,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { invoke } from "../src/claude.mjs";
 
-const STUB = fileURLToPath(new URL("./stub/claude.mjs", import.meta.url));
+const STUB = fileURLToPath(new URL("../tools/stub-claude.mjs", import.meta.url));
 
 function withStub(plan, fn) {
   const dir = mkdtempSync(join(tmpdir(), "nb-stub-"));
@@ -891,14 +899,14 @@ export function invoke({ prompt, systemPromptFile = null, cwd, model, streamJson
 }
 ```
 
-- [ ] **Step 4: Implement `test/stub/claude.mjs`**
+- [ ] **Step 4: Implement `tools/stub-claude.mjs`**
 
 ```js
 #!/usr/bin/env node
 // A fake `claude` binary. Replays scripted replies so the protocol layer can be tested
 // with no network and no spend. Contract is documented in the v1 plan, Task 5.
 
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, renameSync, existsSync } from "node:fs";
 
 const plan = JSON.parse(readFileSync(process.env.NULLBENCH_STUB_PLAN, "utf8"));
 const statePath = process.env.NULLBENCH_STUB_STATE;
@@ -916,7 +924,12 @@ const rule =
 const key = rule === plan.default ? "__default__" : `${rule.promptIncludes}:${rule.arm}`;
 const i = state[key] ?? 0;
 state[key] = i + 1;
-writeFileSync(statePath, JSON.stringify(state));
+// Write-then-rename. Workers run concurrently against one state file; a partial write
+// is read back as truncated JSON, the stub exits non-zero, and the runner records a
+// dead run. Measured at roughly 30% of runs before this was made atomic.
+const tmp = `${statePath}.${process.pid}.tmp`;
+writeFileSync(tmp, JSON.stringify(state));
+renameSync(tmp, statePath);
 
 const outs = rule.outs ?? [""];
 process.stdout.write(outs[i % outs.length]);
@@ -925,13 +938,13 @@ process.exit(rule.code ?? 0);
 
 - [ ] **Step 5: Run the test and verify it passes**
 
-Run: `chmod +x test/stub/claude.mjs && node --test test/claude.test.mjs`
+Run: `chmod +x tools/stub-claude.mjs && node --test test/claude.test.mjs`
 Expected: PASS, 5 tests.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/claude.mjs test/stub/claude.mjs test/claude.test.mjs
+git add src/claude.mjs tools/stub-claude.mjs test/claude.test.mjs
 git commit -m "feat(claude): process adapter behind NULLBENCH_CLAUDE_BIN, plus replay stub"
 ```
 
@@ -951,7 +964,8 @@ The judge exists because substring matching cannot see behaviours with many vali
   - `judgePrompt(task, reply) -> string`
   - `parseVerdict(text) -> { pass, why } | null`
   - `runJudge({ task, reply, model, cwd }) -> Promise<{ pass, why }>` — a judge that fails to run or returns no verdict yields `{ pass: false, why: "judge failed to run" | "judge returned no verdict" }`.
-  - `runCanaries({ canaries, model, cwd }) -> Promise<{ ok, misgrades, total }>` — `canaries` is an array of `{ id, prompt, rubric, reply, expect }` where `expect` is `"PASS"` or `"FAIL"`.
+  - `loadCanaries(path, registration) -> Canary[]` — reads the on-disk file, which is keyed by task id (`{ "<task-id>": [{ label, expect, reply }] }`, the shape cobra already uses), and resolves each entry against the registration into `{ id, task, prompt, rubric, reply, expect }`. Throws `RegistrationError` on a canary naming a task that is not registered, or a task whose verifier is not `judge`.
+  - `runCanaries({ canaries, model, cwd }) -> Promise<{ ok, misgrades, total }>` — takes the resolved canaries. **The rubric is never supplied by the canary file**; it is read from the task, so the gate cannot certify a judge against a rubric no task uses.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -964,9 +978,9 @@ import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { judgePrompt, parseVerdict, runJudge, runCanaries } from "../src/judge.mjs";
+import { judgePrompt, parseVerdict, runJudge, runCanaries, loadCanaries } from "../src/judge.mjs";
 
-const STUB = fileURLToPath(new URL("./stub/claude.mjs", import.meta.url));
+const STUB = fileURLToPath(new URL("../tools/stub-claude.mjs", import.meta.url));
 
 function stubbed(plan) {
   const dir = mkdtempSync(join(tmpdir(), "nb-judge-"));
@@ -1020,8 +1034,8 @@ test("canaries pass when the judge grades known cases correctly", async () => {
     default: { outs: ["VERDICT: FAIL\nREASON: unmatched"] },
   });
   const canaries = [
-    { id: "known-pass", prompt: "Q", rubric: "R", reply: "GOOD-REPLY", expect: "PASS" },
-    { id: "known-fail", prompt: "Q", rubric: "R", reply: "BAD-REPLY", expect: "FAIL" },
+    { id: "t:known-pass", task: "t", prompt: "Q", rubric: "R", reply: "GOOD-REPLY", expect: "PASS" },
+    { id: "t:known-fail", task: "t", prompt: "Q", rubric: "R", reply: "BAD-REPLY", expect: "FAIL" },
   ];
   const r = await runCanaries({ canaries, model: "sonnet", cwd: dir });
   assert.equal(r.ok, true);
@@ -1032,11 +1046,34 @@ test("canaries pass when the judge grades known cases correctly", async () => {
 
 test("a misgraded canary fails the gate and names the case", async () => {
   const dir = stubbed({ default: { outs: ["VERDICT: PASS\nREASON: always passes"] } });
-  const canaries = [{ id: "known-fail", prompt: "Q", rubric: "R", reply: "BAD", expect: "FAIL" }];
+  const canaries = [{ id: "t:known-fail", task: "t", prompt: "Q", rubric: "R", reply: "BAD", expect: "FAIL" }];
   const r = await runCanaries({ canaries, model: "sonnet", cwd: dir });
   assert.equal(r.ok, false);
-  assert.deepEqual(r.misgrades.map((m) => m.id), ["known-fail"]);
+  assert.deepEqual(r.misgrades.map((m) => m.id), ["t:known-fail"]);
   unstub(dir);
+});
+
+test("a canary takes its rubric from the task, never from its own file", () => {
+  const registration = { tasks: [{ id: "jg", spec: { prompt: "the question", verify: { type: "judge", rubric: "THE REAL RUBRIC" } } }] };
+  const dir = mkdtempSync(join(tmpdir(), "nb-can-"));
+  const f = join(dir, "canaries.json");
+  writeFileSync(f, JSON.stringify({ jg: [{ label: "known-pass", expect: "PASS", reply: "r" }] }));
+  const [c] = loadCanaries(f, registration);
+  assert.equal(c.id, "jg:known-pass");
+  assert.equal(c.rubric, "THE REAL RUBRIC");
+  assert.equal(c.prompt, "the question");
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("a canary naming an unregistered or non-judged task aborts the run", () => {
+  const dir = mkdtempSync(join(tmpdir(), "nb-can-"));
+  const f = join(dir, "canaries.json");
+  const registration = { tasks: [{ id: "pat", spec: { prompt: "q", verify: { type: "any", patterns: ["x"] } } }] };
+  writeFileSync(f, JSON.stringify({ ghost: [{ label: "a", expect: "PASS", reply: "r" }] }));
+  assert.throws(() => loadCanaries(f, registration), /not registered/);
+  writeFileSync(f, JSON.stringify({ pat: [{ label: "a", expect: "PASS", reply: "r" }] }));
+  assert.throws(() => loadCanaries(f, registration), /not judge-graded/);
+  rmSync(dir, { recursive: true, force: true });
 });
 ```
 
@@ -1059,7 +1096,9 @@ Expected: FAIL — module not found.
 // the right thing, which inflates every number in the report. FAILURES.md entry 1 is
 // what that looks like when it happens: +70.0pp of pure diction.
 
+import { readFileSync } from "node:fs";
 import { invoke } from "./claude.mjs";
+import { RegistrationError } from "./prereg.mjs";
 
 export function judgePrompt(task, reply) {
   return [
@@ -1103,6 +1142,28 @@ export async function runJudge({ task, reply, model, cwd }) {
 // a canary is not a judge, and the suite's judged tasks are suppressed rather than
 // reported. The observed misgrade rate is published rather than assumed to be zero --
 // in the cobra suite it was 1 in 40 judged runs against 0 in 63 canary gradings.
+// Canaries live in a file keyed by task id and carry only a label, a reply, and the
+// expected verdict. The prompt and rubric come from the registered task itself: a
+// canary that supplied its own copy of the rubric would keep passing after the task's
+// rubric changed, certifying a judge against text no task uses. That is precisely an
+// unverified safeguard, and FAILURES.md exists because of them.
+export function loadCanaries(path, registration) {
+  const raw = JSON.parse(readFileSync(path, "utf8"));
+  const byId = new Map(registration.tasks.map((t) => [t.id, t]));
+  const out = [];
+  const problems = [];
+  for (const [taskId, entries] of Object.entries(raw)) {
+    const task = byId.get(taskId);
+    if (!task) { problems.push(`canary references task "${taskId}", which is not registered`); continue; }
+    if (task.spec.verify.type !== "judge") { problems.push(`canary references task "${taskId}", which is not judge-graded`); continue; }
+    for (const e of entries) {
+      out.push({ id: `${taskId}:${e.label}`, task: taskId, prompt: task.spec.prompt, rubric: task.spec.verify.rubric, reply: e.reply, expect: e.expect });
+    }
+  }
+  if (problems.length) throw new RegistrationError(problems);
+  return out;
+}
+
 export async function runCanaries({ canaries, model, cwd }) {
   const misgrades = [];
   for (const c of canaries) {
@@ -1408,7 +1469,45 @@ test("the average prints once two signal tasks discriminate", () => {
   assert.ok(avg.value > 0);
 });
 
-test("every delta in the rendered report carries an interval", () => {
+// The guard that matters. It must run on a report where the AVERAGE prints, because
+// that is the line most likely to carry a naked delta -- and an earlier version of this
+// test required a leading "|", so it inspected only table cells and never saw it.
+function twoDiscriminating() {
+  const four = [...tasks, { id: "sig2", kind: "signal", predict: "helps" }];
+  const recs = records();
+  for (let i = 0; i < 10; i++) recs.push({ task: "sig2", cond: "control", pass: i < 2, failed: false });
+  for (let i = 0; i < 10; i++) recs.push({ task: "sig2", cond: "treatment", pass: i < 9, failed: false });
+  return aggregate(recs, four);
+}
+
+test("no line anywhere in a report carries a delta without an interval or a marker", () => {
+  const render = (rows) => renderReport({
+    rows, klass: "CONFIRMATORY", reasons: [],
+    registration: { config: { model: "sonnet", judge_model: "sonnet", reps: 10 } },
+    requested: { reps: 10, model: "sonnet", judgeModel: "sonnet" },
+    hash: "a".repeat(64), canary: null,
+  });
+  for (const md of [render(aggregate(records(), tasks)), render(twoDiscriminating())]) {
+    for (const line of md.split("\n")) {
+      if (!/[+-]\d+\.\d+pp/.test(line)) continue;
+      assert.ok(/\[[+-]/.test(line) || /no interval/.test(line),
+        `delta with neither an interval nor a marker: ${line}`);
+    }
+  }
+});
+
+test("a printed average is marked as having no interval", () => {
+  const md = renderReport({
+    rows: twoDiscriminating(), klass: "CONFIRMATORY", reasons: [],
+    registration: { config: { model: "sonnet", judge_model: "sonnet", reps: 10 } },
+    requested: { reps: 10, model: "sonnet", judgeModel: "sonnet" },
+    hash: "a".repeat(64), canary: null,
+  });
+  assert.match(md, /Average across discriminating signal tasks/);
+  assert.match(md, /no interval/);
+});
+
+test("a ceiling task is flagged on its own row, not merely absent from the average", () => {
   const rows = aggregate(records(), tasks);
   const md = renderReport({
     rows, klass: "CONFIRMATORY", reasons: [],
@@ -1416,14 +1515,10 @@ test("every delta in the rendered report carries an interval", () => {
     requested: { reps: 10, model: "sonnet", judgeModel: "sonnet" },
     hash: "a".repeat(64), canary: null,
   });
-  // Any occurrence of "pp" that is a delta must be followed by a bracketed interval.
-  for (const line of md.split("\n")) {
-    if (!/\|\s*[+-]\d+\.\d+pp/.test(line)) continue;
-    assert.match(line, /\[/, `delta without an interval: ${line}`);
-  }
-  assert.match(md, /CONFIRMATORY/);
-  assert.match(md, /non-discriminating/);
-  assert.ok(!/\+26\.7pp/.test(md), "a suppressed average must not appear anywhere");
+  const ceilRow = md.split("\n").find((l) => l.includes("`ceil`"));
+  const sigRow = md.split("\n").find((l) => l.includes("`sig`"));
+  assert.match(ceilRow, /non-discriminating/);
+  assert.ok(!/non-discriminating/.test(sigRow), "a discriminating task must not be flagged");
 });
 
 test("an exploratory report says why and prints no average", () => {
@@ -1479,7 +1574,11 @@ export function aggregate(records, tasks) {
     };
     const control = arm("control");
     const treatment = arm("treatment");
-    const interval = newcombe(control.k, control.n, treatment.k, treatment.n);
+    // Guarded like the per-arm intervals above: newcombe calls wilson, which throws at
+    // n < 1. Reachable whenever a task id is passed that produced no records.
+    const interval = control.n && treatment.n
+      ? newcombe(control.k, control.n, treatment.k, treatment.n)
+      : { lo: NaN, hi: NaN };
     return {
       id: t.id, kind: t.kind, predict: t.predict, control, treatment,
       delta: treatment.rate - control.rate, ci: interval,
@@ -1506,7 +1605,7 @@ const HEADERS = {
   VOID: "Too few graded runs to report anything.",
 };
 
-export function renderReport({ rows, klass, reasons, registration, requested, hash, canary }) {
+export function renderReport({ rows, klass, reasons, warnings = [], registration, requested, hash, canary }) {
   const L = [];
   L.push(`# nullbench report — ${klass}`, "");
   L.push(HEADERS[klass], "");
@@ -1515,6 +1614,13 @@ export function renderReport({ rows, klass, reasons, registration, requested, ha
   if (reasons.length) {
     L.push(`## Why this run is ${klass.toLowerCase()}`, "");
     for (const r of reasons) L.push(`- ${r}`);
+    L.push("");
+  }
+  // Warnings are not reasons. A leakage suspicion under a heading reading "Why this run
+  // is confirmatory" is nonsense, and the heuristic is too weak to change the class.
+  if (warnings.length) {
+    L.push("## Warnings", "");
+    for (const w of warnings) L.push(`- ${w}`);
     L.push("");
   }
   if (klass === "VOID") return L.join("\n");
@@ -1538,11 +1644,22 @@ export function renderReport({ rows, klass, reasons, registration, requested, ha
   } else if (avg.suppressed) {
     L.push(`**Average across signal tasks: suppressed** — ${avg.why}.`, "");
   } else {
-    L.push(`**Average across discriminating signal tasks: ${pp(avg.value)}**`, "");
+    L.push(
+      `**Average across discriminating signal tasks: ${pp(avg.value)}** ` +
+      `(no interval — a mean of per-task deltas averages heterogeneous quantities and ` +
+      `has no defined interval; read the per-task rows above)`, "");
   }
 
   if (canary) {
-    L.push(`Judge canaries: ${canary.total - canary.misgrades.length}/${canary.total} graded correctly.`, "");
+    L.push(canary.total === 0
+      ? `Judge canaries: none found. An ungated judge is an unverified safeguard; judged tasks cannot be confirmed.`
+      : `Judge canaries: ${canary.total - canary.misgrades.length}/${canary.total} graded correctly.`, "");
+    // Spec 6 entry 3 is an OPEN failure mode and requires disclosure in every report
+    // that used a judge. A blind spot shared by judge and subject cannot show up in a
+    // canary, because canaries are hand-written to probe known failure modes.
+    L.push(`**Known limitation:** the judge (\`${requested.judgeModel}\`) shares a model family with the ` +
+      `subject (\`${requested.model}\`). A blind spot common to both would not be visible here, ` +
+      `and the canaries cannot detect it. See FAILURES.md entry 3.`, "");
   }
   L.push("Predictions are recorded in `LEDGER.md` whether or not they were borne out.", "");
   return L.join("\n");
@@ -1707,7 +1824,7 @@ export function appendEntry(path, { stamp, klass, hash, requested, rows, reasons
     const avg = averageDelta(rows);
     L.push(avg.suppressed || klass !== "CONFIRMATORY"
       ? `average across signal tasks: suppressed — ${klass !== "CONFIRMATORY" ? `run is ${klass.toLowerCase()}` : avg.why}`
-      : `average across discriminating signal tasks: ${pp(avg.value)}`);
+      : `average across discriminating signal tasks: ${pp(avg.value)} (no interval — see per-task rows)`);
   }
   for (const r of reasons) L.push(`note: ${r}`);
   L.push("```");
@@ -1760,7 +1877,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runSuite, gradedCounts } from "../src/runner.mjs";
 
-const STUB = fileURLToPath(new URL("./stub/claude.mjs", import.meta.url));
+const STUB = fileURLToPath(new URL("../tools/stub-claude.mjs", import.meta.url));
 
 function env(plan) {
   const dir = mkdtempSync(join(tmpdir(), "nb-run-"));
@@ -1867,10 +1984,11 @@ Expected: FAIL — module not found.
 // outside the repository with --setting-sources project, so neither arm can see the
 // installed skills, the repository, or its CLAUDE.md.
 
-import { mkdtempSync, mkdirSync, writeFileSync, cpSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, cpSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { invoke } from "./claude.mjs";
+import { assertIsolated } from "./leakage.mjs";
 import { verify } from "./verify.mjs";
 import { runJudge } from "./judge.mjs";
 
@@ -1878,8 +1996,19 @@ import { runJudge } from "./judge.mjs";
 // that edits files cannot contaminate the next one.
 function makeCwd(task, fixtureRoot, shared) {
   if (!task.spec.fixture) return { cwd: shared, temporary: false };
+  const src = join(fixtureRoot, task.spec.fixture);
+  if (!existsSync(src)) {
+    throw new Error(`task "${task.id}" declares fixture "${task.spec.fixture}", but ${src} does not exist`);
+  }
   const dir = mkdtempSync(join(tmpdir(), "nullbench-fx-"));
-  cpSync(join(fixtureRoot, task.spec.fixture), dir, { recursive: true });
+  cpSync(src, dir, { recursive: true });
+  // A fixture is a real project copied in, and it may carry its own CLAUDE.md or
+  // .claude directory. Every cwd is checked, not just the shared one.
+  const iso = assertIsolated(dir, fixtureRoot);
+  if (!iso.ok) {
+    rmSync(dir, { recursive: true, force: true });
+    throw new Error(`fixture sandbox for "${task.id}" is not isolated:\n  - ${iso.problems.join("\n  - ")}`);
+  }
   return { cwd: dir, temporary: true };
 }
 
@@ -2042,25 +2171,35 @@ Expected: FAIL — module not found.
 ```js
 // Flag parsing, cost preflight, orchestration, exit codes.
 
-import { mkdirSync, writeFileSync, existsSync, readFileSync } from "node:fs";
+import { mkdirSync, writeFileSync, existsSync, readFileSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { loadRegistration, RegistrationError } from "./prereg.mjs";
 import { runSuite, gradedCounts } from "./runner.mjs";
-import { runCanaries } from "./judge.mjs";
+import { runCanaries, loadCanaries } from "./judge.mjs";
 import { classify } from "./classify.mjs";
 import { aggregate, renderReport } from "./report.mjs";
 import { appendEntry } from "./ledger.mjs";
 
+function intArg(raw, flag) {
+  const v = Number(raw);
+  // Number("abc") is NaN, and `args.reps ?? registration.reps` does not catch NaN --
+  // it flowed through to a "TOTAL NaN invocations" preflight and a RangeError later.
+  if (!Number.isInteger(v) || v < 1) throw new RegistrationError([`${flag} must be a positive integer, got "${raw}"`]);
+  return v;
+}
+
 export function parseArgs(argv) {
-  const out = { dir: ".", reps: null, model: null, judgeModel: null, taskIds: [], yes: false, dryRun: false, skill: null };
+  const out = { dir: ".", reps: null, model: null, judgeModel: null, taskIds: [], yes: false, dryRun: false, skill: null, costPerCall: 0.02 };
   const rest = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === "--reps") out.reps = Number(argv[++i]);
+    if (a === "--reps") out.reps = intArg(argv[++i], "--reps");
     else if (a === "--model") out.model = argv[++i];
     else if (a === "--judge-model") out.judgeModel = argv[++i];
     else if (a === "--task") out.taskIds.push(argv[++i]);
     else if (a === "--skill") out.skill = argv[++i];
+    else if (a === "--cost-per-call") out.costPerCall = Number(argv[++i]);
     else if (a === "--yes") out.yes = true;
     else if (a === "--dry-run") out.dryRun = true;
     else rest.push(a);
@@ -2104,6 +2243,18 @@ export async function main(argv, { stdout = process.stdout, stdin = process.stdi
     taskIds: args.taskIds.length ? args.taskIds : registration.tasks.map((t) => t.id),
   };
 
+  // Structural, not drift: an unknown id and a missing SKILL.md both mean the run
+  // cannot happen. Without these, --task nope threw a TypeError deep in plan(), and a
+  // missing SKILL.md crashed AFTER the whole batch was paid for.
+  const known = new Set(registration.tasks.map((t) => t.id));
+  const unknown = requested.taskIds.filter((id) => !known.has(id));
+  const skillFile = args.skill ? resolve(args.skill) : join(dir, "SKILL.md");
+  const structural = [
+    ...unknown.map((id) => `--task "${id}" is not in the registration`),
+    ...(existsSync(skillFile) ? [] : [`no SKILL.md at ${skillFile}`]),
+  ];
+  if (structural.length) { stdout.write(new RegistrationError(structural).message + "\n"); return 2; }
+
   const p = plan(registration, requested);
   stdout.write(
     `nullbench — ${registration.tasks.length} registered task(s), running ${requested.taskIds.length}\n` +
@@ -2111,7 +2262,9 @@ export async function main(argv, { stdout = process.stdout, stdin = process.stdi
     `  model         ${requested.model} (judge ${requested.judgeModel}), reps ${requested.reps}\n` +
     `  subject runs  ${p.subjectRuns}\n` +
     `  judge calls   ${p.judgeRuns}\n` +
-    `  TOTAL         ${p.total} CLI invocations — this costs real money and takes real time\n`
+    `  TOTAL         ${p.total} CLI invocations\n` +
+    `  est. spend    ~$${(p.total * args.costPerCall).toFixed(2)} at an assumed ` +
+    `$${args.costPerCall.toFixed(2)}/call — override with --cost-per-call\n`
   );
   if (registration.drift.length) {
     stdout.write(`  drift detected — this run cannot be confirmatory:\n`);
@@ -2123,7 +2276,6 @@ export async function main(argv, { stdout = process.stdout, stdin = process.stdi
     return 0;
   }
 
-  const skillFile = args.skill ? resolve(args.skill) : join(dir, "SKILL.md");
   const stamp = new Date().toISOString().replace(/\.\d+Z$/, "Z");
   const outDir = join(dir, "results", stamp.replace(/[:.]/g, "-"));
   mkdirSync(outDir, { recursive: true });
@@ -2138,8 +2290,12 @@ export async function main(argv, { stdout = process.stdout, stdin = process.stdi
         `An ungated judge is an unverified safeguard; judged results cannot be confirmed.\n`);
       canary = { ok: false, misgrades: [{ id: "missing", why: "no canaries.json" }], total: 0 };
     } else {
+      const canarySandbox = mkdtempSync(join(tmpdir(), "nullbench-canary-"));
+      const iso = assertIsolated(canarySandbox, dir);
+      if (!iso.ok) throw new Error(`canary sandbox is not isolated:\n  - ${iso.problems.join("\n  - ")}`);
       canary = await runCanaries({
-        canaries: JSON.parse(readFileSync(cPath, "utf8")), model: requested.judgeModel, cwd: outDir });
+        canaries: loadCanaries(cPath, registration), model: requested.judgeModel, cwd: canarySandbox });
+      rmSync(canarySandbox, { recursive: true, force: true });
       stdout.write(`judge canaries: ${canary.total - canary.misgrades.length}/${canary.total} correct\n`);
     }
   }
@@ -2154,13 +2310,27 @@ export async function main(argv, { stdout = process.stdout, stdin = process.stdi
   const counts = gradedCounts(records);
   const { klass, reasons } = classify({
     registration, requested, gradedCounts: counts, canaryOk: canary ? canary.ok : null });
-
   const rows = klass === "VOID" ? [] : aggregate(records, registration.tasks.filter((t) => requested.taskIds.includes(t.id)));
-  const md = renderReport({ rows, klass, reasons, registration, requested, hash: registration.hash, canary });
 
-  writeFileSync(join(outDir, "report.md"), md);
-  writeFileSync(join(outDir, "records.json"), JSON.stringify({ stamp, hash: registration.hash, klass, requested, records }, null, 2));
-  appendEntry(join(dir, "LEDGER.md"), { stamp, klass, hash: registration.hash, requested, rows, reasons });
+  // Everything from here can throw, and by now the batch has been paid for. The ledger
+  // append runs in `finally` so a crash cannot quietly delete a run from the record --
+  // the file drawer is the failure this project is named after.
+  let md = `# nullbench report — ${klass}\n\n(report rendering failed; see records.json)\n`;
+  const warnings = [];
+  try {
+    const terms = distinctiveTerms(readFileSync(skillFile, "utf8"));
+    const leak = scanControlLeakage({ rawDir: join(outDir, "raw"), terms });
+    if (leak.suspicious) {
+      warnings.push(
+        `possible control-arm leakage: ${leak.hits}/${leak.checked} control replies contain ` +
+        `the skill's distinctive vocabulary. A weak heuristic, not proof — see FAILURES.md entry 5.`);
+    }
+    md = renderReport({ rows, klass, reasons, warnings, registration, requested, hash: registration.hash, canary });
+    writeFileSync(join(outDir, "report.md"), md);
+    writeFileSync(join(outDir, "records.json"), JSON.stringify({ stamp, hash: registration.hash, klass, requested, records }, null, 2));
+  } finally {
+    appendEntry(join(dir, "LEDGER.md"), { stamp, klass, hash: registration.hash, requested, rows, reasons: [...reasons, ...warnings] });
+  }
 
   stdout.write(`${md}\n`);
   stdout.write(`Report: ${join(outDir, "report.md")}\nLedger: ${join(dir, "LEDGER.md")}\n`);
@@ -2329,7 +2499,9 @@ export function assertIsolated(cwd, repoRoot) {
   const abs = resolve(cwd);
   const root = resolve(repoRoot);
   const rel = relative(root, abs);
-  if (rel && !rel.startsWith("..") && !isAbsolute(rel)) {
+  // rel === "" means cwd IS the repository root -- the worst case, and an earlier
+  // version skipped it because of a truthiness check on rel.
+  if (!rel.startsWith("..") && !isAbsolute(rel)) {
     problems.push(`sandbox ${abs} is inside the repository at ${root}; the control arm can read the skill`);
   }
   for (const name of FORBIDDEN) {
@@ -2460,7 +2632,7 @@ import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
-export const STUB = fileURLToPath(new URL("../stub/claude.mjs", import.meta.url));
+export const STUB = fileURLToPath(new URL("../../tools/stub-claude.mjs", import.meta.url));
 const sha = (s) => createHash("sha256").update(s).digest("hex");
 
 // Builds a suite on disk and returns its directory. `tasks` are task specs; the
@@ -2504,7 +2676,12 @@ export function capture() {
 
 export const ledger = (dir) => readFileSync(join(dir, "LEDGER.md"), "utf8");
 
+// TWO signal tasks, deliberately. With one, "the average is suppressed" is true under
+// every implementation (a mean needs two discriminating tasks), and "non-discriminating"
+// is satisfied by the harm row -- so both assertions pass with ceiling detection ripped
+// out. Two signal tasks is what makes these tests falsifiable.
 export const SIGNAL = { id: "sig", kind: "signal", prompt: "is three caught enough", verify: { type: "any", patterns: ["denominator"] } };
+export const SIGNAL2 = { id: "sig2", kind: "signal", prompt: "is the coverage gate sound", verify: { type: "any", patterns: ["gaming"] } };
 export const HARM = { id: "harm", kind: "harm", prompt: "btree versus gin", verify: { type: "none", patterns: ["goodhart"], maxWords: 500 } };
 ```
 
@@ -2513,45 +2690,66 @@ export const HARM = { id: "harm", kind: "harm", prompt: "btree versus gin", veri
 ```js
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { main } from "../../src/cli.mjs";
-import { makeSuite, useStub, clearStub, capture, ledger, SIGNAL, HARM } from "./helpers.mjs";
+import { makeSuite, useStub, clearStub, capture, ledger, SIGNAL, SIGNAL2, HARM } from "./helpers.mjs";
 
 afterEach(clearStub);
 
-// A stub plan where treatment says the magic word and control does not.
+const ALL = [SIGNAL, SIGNAL2, HARM];
+
+// Both signal tasks discriminate: treatment says the magic word, control does not.
 const WORKING = {
   rules: [
     { promptIncludes: "three caught", arm: "treatment", outs: ["the denominator is missing"] },
     { promptIncludes: "three caught", arm: "control", outs: ["looks fine"] },
+    { promptIncludes: "coverage gate", arm: "treatment", outs: ["that invites gaming"] },
+    { promptIncludes: "coverage gate", arm: "control", outs: ["seems reasonable"] },
   ],
   default: { outs: ["a clean neutral answer"] },
 };
 
-test("a clean run is CONFIRMATORY and lands in the ledger", async () => {
-  const dir = makeSuite({ tasks: [SIGNAL, HARM] });
+// sig is at ceiling in both arms; sig2 still discriminates.
+const ONE_AT_CEILING = {
+  rules: [
+    { promptIncludes: "three caught", arm: "any", outs: ["the denominator is missing"] },
+    { promptIncludes: "coverage gate", arm: "treatment", outs: ["that invites gaming"] },
+    { promptIncludes: "coverage gate", arm: "control", outs: ["seems reasonable"] },
+  ],
+  default: { outs: ["a clean neutral answer"] },
+};
+
+test("a clean run is CONFIRMATORY, prints the average, and lands in the ledger", async () => {
+  const dir = makeSuite({ tasks: ALL });
   useStub(dir, WORKING);
   const cap = capture();
   const code = await main([dir, "--yes"], cap);
   assert.equal(code, 0);
   assert.match(cap.text(), /CONFIRMATORY/);
+  // Both signal tasks discriminate, so the average MUST print here. Without this the
+  // suppression assertions elsewhere are unfalsifiable.
+  assert.match(cap.text(), /Average across discriminating signal tasks/);
+  assert.match(cap.text(), /no interval/);
   assert.match(ledger(dir), /CONFIRMATORY/);
 });
 
 test("TAMPER: editing a task after registration forces EXPLORATORY and no average", async () => {
-  const dir = makeSuite({ tasks: [SIGNAL, HARM], corrupt: "sig" });
+  // Uses the WORKING plan, where the average would otherwise print -- so the
+  // suppression assertion below actually discriminates.
+  const dir = makeSuite({ tasks: ALL, corrupt: "sig" });
   useStub(dir, WORKING);
   const cap = capture();
   const code = await main([dir, "--yes"], cap);
   assert.equal(code, 0);
   assert.match(cap.text(), /EXPLORATORY/);
   assert.match(cap.text(), /average across signal tasks: suppressed/i);
-  assert.ok(!/Average across discriminating/.test(cap.text()));
+  assert.ok(!/Average across discriminating/.test(cap.text()),
+    "an exploratory run must not print an average it would have printed when clean");
 });
 
 test("FILTER: running a subset of registered tasks forces EXPLORATORY", async () => {
-  const dir = makeSuite({ tasks: [SIGNAL, HARM] });
+  const dir = makeSuite({ tasks: ALL });
   useStub(dir, WORKING);
   const cap = capture();
   await main([dir, "--yes", "--task", "sig"], cap);
@@ -2560,7 +2758,7 @@ test("FILTER: running a subset of registered tasks forces EXPLORATORY", async ()
 });
 
 test("MISSING HARM: a suite with no negative control cannot be confirmed", async () => {
-  const dir = makeSuite({ tasks: [SIGNAL, HARM], omitHarm: true });
+  const dir = makeSuite({ tasks: ALL, omitHarm: true });
   useStub(dir, WORKING);
   const cap = capture();
   await main([dir, "--yes"], cap);
@@ -2568,17 +2766,23 @@ test("MISSING HARM: a suite with no negative control cannot be confirmed", async
   assert.match(cap.text(), /negative control/);
 });
 
-test("CEILING: a task at 100% in both arms is flagged, not reported as a finding", async () => {
-  const dir = makeSuite({ tasks: [SIGNAL, HARM] });
-  useStub(dir, { default: { outs: ["the denominator is missing"] } }); // both arms pass
+test("CEILING: the ceiling task's own row is flagged and the discriminating one is not", async () => {
+  const dir = makeSuite({ tasks: ALL });
+  useStub(dir, ONE_AT_CEILING);
   const cap = capture();
   await main([dir, "--yes"], cap);
-  assert.match(cap.text(), /non-discriminating/);
-  assert.match(cap.text(), /average across signal tasks: suppressed/i);
+  const lines = cap.text().split("\n");
+  const sigRow = lines.find((l) => l.includes("`sig`"));
+  const sig2Row = lines.find((l) => l.includes("`sig2`"));
+  // Asserting on the ROWS, not on the presence of the word anywhere: the harm row is
+  // also at 100/100 and would satisfy a document-wide match with detection removed.
+  assert.match(sigRow, /non-discriminating/, "the ceiling signal task must be flagged");
+  assert.ok(!/non-discriminating/.test(sig2Row), "the discriminating task must not be flagged");
+  assert.match(cap.text(), /1 of 2 signal tasks discriminate/);
 });
 
 test("DEAD RUNS: a batch with too few graded runs is VOID, exits 1, and still logs", async () => {
-  const dir = makeSuite({ tasks: [SIGNAL, HARM] });
+  const dir = makeSuite({ tasks: ALL });
   useStub(dir, { default: { outs: [""], code: 1 } });
   const cap = capture();
   const code = await main([dir, "--yes"], cap);
@@ -2588,13 +2792,24 @@ test("DEAD RUNS: a batch with too few graded runs is VOID, exits 1, and still lo
   assert.match(ledger(dir), /VOID/, "the file drawer stays shut");
 });
 
-test("FILE DRAWER: the ledger is written on every path, including aborts of confirmation", async () => {
-  const dir = makeSuite({ tasks: [SIGNAL, HARM] });
+test("FILE DRAWER: a run that spends anything is logged; a dry run is not", async () => {
+  const dir = makeSuite({ tasks: ALL });
   useStub(dir, WORKING);
   await main([dir, "--dry-run"], capture());
   assert.equal(existsSync(join(dir, "LEDGER.md")), false, "a dry run spends nothing and logs nothing");
   await main([dir, "--yes"], capture());
   assert.ok(ledger(dir).includes("CONFIRMATORY"));
+});
+
+test("FILE DRAWER: a crash after the batch still leaves a ledger entry", async () => {
+  // The expensive failure: the runs are paid for, then something downstream throws, and
+  // the batch vanishes. `main` wraps the post-run block in try/finally for this reason.
+  const dir = makeSuite({ tasks: ALL });
+  useStub(dir, WORKING);
+  rmSync(join(dir, "SKILL.md"));           // leakage scan will fail to read it
+  await main([dir, "--yes"], capture()).catch(() => {});
+  assert.equal(existsSync(join(dir, "LEDGER.md")), true,
+    "a batch that was paid for must never disappear from the ledger");
 });
 ```
 
@@ -2761,11 +2976,18 @@ mkdir -p examples/cobra/tasks
 cp ~/code/cobra-skill/eval/tasks/*.json examples/cobra/tasks/
 cp ~/code/cobra-skill/skills/cobra/SKILL.md examples/cobra/SKILL.md
 cp ~/code/cobra-skill/eval/judge-canaries.json examples/cobra/canaries.json
+cp -R ~/code/cobra-skill/eval/fixtures examples/cobra/fixtures
 ```
 
-Then reshape `canaries.json` to the Task 6 contract — an array of
-`{ id, prompt, rubric, reply, expect }` — adapting whatever shape the cobra file uses.
-Read it before converting; do not assume.
+The `fixtures` copy is not optional: `ic-agent-under-pressure.json` declares
+`"fixture": "failing-suite"`, and `makeCwd` resolves it against the suite directory.
+Without it that task throws inside a worker and kills the run — which is the task the
+success criterion depends on.
+
+`canaries.json` needs no reshaping: `loadCanaries` (Task 6) reads cobra's existing
+`{ "<task-id>": [{ label, expect, reply }] }` shape directly and resolves the prompt and
+rubric from the registered task. Verify with `node -e` that every top-level key in the
+file matches a task id in `tasks/`, since `loadCanaries` aborts the run otherwise.
 
 - [ ] **Step 2: Generate `nullbench.json` with correct hashes**
 
@@ -2836,6 +3058,30 @@ git commit -m "example(cobra): the worked example, which suppresses its own publ
 **Files:**
 - Create: `FAILURES.md`, `PROTOCOL.md`, `README.md`, `ATTRIBUTION.md`, `LICENSE`
 
+- [ ] **Step 0: Amend the spec where the implementation diverged**
+
+The plan's header says the spec is authoritative and disagreements get a commit that
+says so. Two are outstanding; resolve both in `docs/superpowers/specs/2026-09-14-nullbench-design.md`
+before writing `PROTOCOL.md`, or `PROTOCOL.md` will document code that does not exist.
+
+1. **Hash construction (§5.2).** The spec says
+   `H = sha256(canonical(nullbench.json) || sha256(task_1) || ...)`. Task 3 instead
+   hashes a canonical projection — `{model, judge_model, reps, tasks:[{id, kind,
+   predict, sha256: actual}]}` — which excludes `file` paths and the *declared* hashes.
+   The implementation is the better design: it names what actually ran, so a registration
+   reformatted or with a path moved still hashes identically, while a changed task does
+   not. Amend §5.2 to the implemented formula and say why.
+2. **VOID output (§5.3 vs §5.5).** §5.5 says a thin cell "reports `n/a`"; §5.3 says a
+   VOID run reports no per-task figures at all. These contradict. The implementation
+   follows §5.3 — `renderReport` returns before the tables. Amend §5.5 to match, and
+   state that the graded-run counts appear in the ledger entry and in the reasons list,
+   which is where a reader looks to find out what died.
+
+```bash
+git add docs/superpowers/specs/2026-09-14-nullbench-design.md
+git commit -m "spec: hash the projection rather than the file, and drop n/a from VOID output"
+```
+
 - [ ] **Step 1: Write `FAILURES.md`**
 
 Thirteen entries in four classes, verbatim in structure from spec §6. Each entry:
@@ -2851,9 +3097,18 @@ Thirteen entries in four classes, verbatim in structure from spec §6. Each entr
 there isn't one.>
 ```
 
-Copy the numbers from spec §6; they are already checked against
-`cobra-skill/eval/RESULTS.md`. Entries 3, 9 and 12's open/mitigated status must not be
-upgraded — three of thirteen marked open is the credibility of the document.
+Copy the numbers from spec §6 — with one correction. **Entry 2 is wrong in both the
+spec and in `cobra-skill/eval/RESULTS.md`.** RESULTS.md line 25 gives the re-graded
+`ic-smoke-denominator` as 10% → 90%, a delta of **+80.0pp**; its prose at line 55 says
+"+90.0pp against +50.0pp". 10 → 90 is +80.0pp, so the prose figure is the error and it
+propagated into the spec. Write `+80.0pp` in `FAILURES.md`, and note in the entry that
+the substring verifier *understated* the effect by 30pp rather than 40pp.
+
+This is a defect in a published document, and correcting `cobra-skill/eval/RESULTS.md`
+is a separate task in a separate repository — raise it, do not silently fix it from here.
+
+Entries 3, 9 and 12's open/mitigated status must not be upgraded — three of thirteen
+marked open is the credibility of the document.
 
 - [ ] **Step 2: Write `PROTOCOL.md`**
 
@@ -2893,7 +3148,21 @@ and Newcombe (1998) for the intervals. Follow the convention already set in
 
 - [ ] **Step 5: Add `LICENSE`** — MIT, matching `package.json`.
 
-- [ ] **Step 6: Final check**
+- [ ] **Step 6: Add the pointer from `cobra-skill` (spec §7)**
+
+In `~/code/cobra-skill`, on a feature branch, add a short note to `eval/README.md`
+saying that the suite has been ported to nullbench as its worked example, with a link.
+This is the *pointer* only. Amending cobra's `+26.7pp` headline is the separate deferred
+item from spec §10 and is explicitly **not** part of this step. Two things also belong
+in that branch's description, both found while building this plan:
+
+- `eval/RESULTS.md` line 55 says `+90.0pp` where the table at line 25 gives `+80.0pp`.
+- `eval/run.mjs` has the same sentence-boundary bug in `firstUnnegated` that Task 4
+  fixes here: a negation cue in the preceding sentence suppresses the following clause.
+
+Open it as a pull request against `cobra-skill`; do not commit to its `main`.
+
+- [ ] **Step 7: Final check**
 
 ```bash
 npm test && node bin/nullbench.mjs examples/cobra --dry-run
@@ -2901,7 +3170,7 @@ npm test && node bin/nullbench.mjs examples/cobra --dry-run
 
 Expected: all tests pass; the dry run reports no drift.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add README.md FAILURES.md PROTOCOL.md ATTRIBUTION.md LICENSE
@@ -2917,4 +3186,10 @@ git commit -m "docs: the failure catalog, the protocol, and the retraction that 
 3. `node bin/nullbench.mjs examples/cobra --yes` returns CONFIRMATORY and **suppresses**
    the average, with `ic-smoke-denominator` at roughly `+80.0pp [+37.0pp, +91.6pp]`.
 4. `FAILURES.md` reads as a standalone document, with three entries still marked open.
-5. No delta appears anywhere in any output without its interval.
+5. No per-task delta appears anywhere in any output without its interval, and the
+   average appears only with its explicit `no interval` marker.
+6. The e2e suite is stable across ten consecutive runs. The stub's state file is written
+   atomically; before that fix the suite flaked at roughly 30%, and each flake surfaced
+   as a spurious VOID — the harness misreporting its own dead runs.
+7. `npm test` never executes anything under `test/live/` and never loads
+   `tools/stub-claude.mjs` as a test.
