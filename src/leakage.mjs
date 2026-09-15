@@ -40,7 +40,27 @@ const STOP = new Set(("the a an and or but if is are was were be been being to o
   "what which who when where why how all any some each more most other into than then so such only own same too very").split(" "));
 
 export function distinctiveTerms(skillText, limit = 12) {
-  const body = skillText.replace(/^---[\s\S]*?---/, " ").toLowerCase();
+  // Only strip frontmatter if the very first line is exactly --- and a later
+  // line is also exactly ---, with no blank lines between them. YAML frontmatter
+  // does not contain blank lines, but a document with horizontal-rule separators
+  // typically does. This prevents stripping body content when the document opens
+  // with a horizontal rule that isn't YAML frontmatter.
+  let body = skillText;
+  const lines = skillText.split("\n");
+  if (lines[0]?.trim() === "---") {
+    // Find the closing --- (must be on its own line)
+    const closeIdx = lines.slice(1).findIndex((line) => line.trim() === "---");
+    if (closeIdx !== -1) {
+      // Check if the block contains blank lines (signal of body content, not metadata)
+      const block = lines.slice(1, closeIdx + 1);
+      const hasBlankLines = block.some((line) => line.trim() === "");
+      if (!hasBlankLines) {
+        // No blank lines: this looks like YAML frontmatter, strip it
+        body = lines.slice(closeIdx + 2).join("\n");
+      }
+    }
+  }
+  body = body.toLowerCase();
   const words = body.split(/[^a-z']+/).filter(Boolean);
 
   // Bigrams whose halves are both content words carry far more signal than any single
@@ -60,7 +80,9 @@ export function distinctiveTerms(skillText, limit = 12) {
 
 export function scanControlLeakage({ rawDir, terms, threshold = 0.5 }) {
   if (!existsSync(rawDir) || terms.length === 0) return { checked: 0, hits: 0, rate: 0, suspicious: false };
-  const files = readdirSync(rawDir).filter((f) => f.includes("__control__"));
+  // Match only files with the exact shape: *__control__<digits>.txt
+  // This prevents collisions with .bak files or task ids containing __control__ substring
+  const files = readdirSync(rawDir).filter((f) => /.*__control__\d+\.txt$/.test(f));
   let hits = 0;
   for (const f of files) {
     const text = readFileSync(join(rawDir, f), "utf8").toLowerCase();

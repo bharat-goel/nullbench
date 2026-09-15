@@ -79,3 +79,63 @@ test("a clean control arm is not flagged", () => {
   assert.equal(r.suspicious, false);
   rmSync(dir, { recursive: true, force: true });
 });
+
+test("the file filter rejects .bak backups of control files", () => {
+  const dir = mkdtempSync(join(tmpdir(), "nb-scan-"));
+  // Create a real control file and a backup
+  writeFileSync(join(dir, "t__control__1.txt"), "perverse incentive");
+  writeFileSync(join(dir, "t__control__1.txt.bak"), "perverse incentive backup");
+  const r = scanControlLeakage({ rawDir: dir, terms: ["perverse incentive"] });
+  // Should count only the .txt file, not the .bak
+  assert.equal(r.checked, 1, "backup file must not be scanned");
+  assert.equal(r.hits, 1);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("the file filter correctly distinguishes control from treatment in task ids", () => {
+  const dir = mkdtempSync(join(tmpdir(), "nb-scan-"));
+  // A task whose id contains __control__ substring
+  // This would produce: sig__control__treatment__1.txt
+  // The old filter would match this as a control file; it must not.
+  writeFileSync(join(dir, "sig__control__treatment__1.txt"), "perverse incentive");
+  writeFileSync(join(dir, "sig__control__control__1.txt"), "perverse incentive");
+  const r = scanControlLeakage({ rawDir: dir, terms: ["perverse incentive"] });
+  // Only sig__control__control__1.txt matches __control__<digit>.txt pattern
+  assert.equal(r.checked, 1, "treatment file must not be counted as control");
+  assert.equal(r.hits, 1);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("distinctiveTerms handles documents that open with a horizontal rule", () => {
+  // A document that starts with ---, has body content, then another --- later
+  // The old regex would strip from first --- to the second ---, losing the first section
+  const skill = `---
+A horizontal rule, not YAML frontmatter.
+
+This section contains perverse incentive language that should be extracted.
+
+---
+
+And this is after another separator.`;
+  const terms = distinctiveTerms(skill);
+  // "perverse incentive" should appear in terms since the first section wasn't stripped
+  assert.ok(terms.some((t) => t.includes("perverse incentive")),
+    "terms from first section must not be lost to false frontmatter stripping");
+});
+
+test("distinctiveTerms correctly strips actual YAML frontmatter", () => {
+  // Well-formed frontmatter: first line is ---, body, then closing ---
+  const skill = `---
+title: cobra
+description: measure rewards
+---
+
+Ask what the measure actually rewards. Watch for perverse incentive.`;
+  const terms = distinctiveTerms(skill);
+  // Frontmatter words like "title" and "description" should not be extracted
+  assert.ok(!terms.includes("title"), "frontmatter field names must not become terms");
+  assert.ok(!terms.includes("description"));
+  // Body content should still be there
+  assert.ok(terms.some((t) => t.includes("perverse incentive")),
+    "body content must be extracted after frontmatter removal");
+});
