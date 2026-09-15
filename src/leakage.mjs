@@ -40,11 +40,14 @@ const STOP = new Set(("the a an and or but if is are was were be been being to o
   "what which who when where why how all any some each more most other into than then so such only own same too very").split(" "));
 
 export function distinctiveTerms(skillText, limit = 12) {
-  // Only strip frontmatter if the very first line is exactly --- and a later
-  // line is also exactly ---, with no blank lines between them. YAML frontmatter
-  // does not contain blank lines, but a document with horizontal-rule separators
-  // typically does. This prevents stripping body content when the document opens
-  // with a horizontal rule that isn't YAML frontmatter.
+  // Only strip if the first and second lines are exactly --- with no blanks between them.
+  // This is a heuristic bet about document patterns, not a YAML rule (YAML allows blank
+  // lines in frontmatter). In practice, frontmatter tends to be compact key:value lines
+  // without blanks; body sections opened with --- tend to have prose with blanks. If we
+  // strip when blanks are present, the safe error is under-stripping: frontmatter words
+  // leak into the term list (noise, acceptable). If we strip a terse --- block with no
+  // blanks, the unsafe error remains possible: body content silently lost. Narrowed, not
+  // eliminated, but the tradeoff is acceptable.
   let body = skillText;
   const lines = skillText.split("\n");
   if (lines[0]?.trim() === "---") {
