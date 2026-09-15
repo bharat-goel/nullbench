@@ -23,7 +23,11 @@ export function assertIsolated(cwd, repoRoot) {
   // rel === "" means cwd IS the repository root -- the worst case, and an earlier
   // version skipped it because of a truthiness check on rel.
   if (!rel.startsWith("..") && !isAbsolute(rel)) {
-    problems.push(`sandbox ${abs} is inside the repository at ${root}; the control arm can read the skill`);
+    if (rel === "") {
+      problems.push(`sandbox ${abs} is the repository root itself; the control arm can read the skill`);
+    } else {
+      problems.push(`sandbox ${abs} is inside the repository at ${root}; the control arm can read the skill`);
+    }
   }
   for (const name of FORBIDDEN) {
     if (existsSync(join(abs, name))) problems.push(`sandbox contains ${name}, which the control arm must not see`);

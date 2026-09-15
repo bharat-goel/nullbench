@@ -23,6 +23,17 @@ test("a directory inside the repo is not isolated", () => {
   rmSync(repo, { recursive: true, force: true });
 });
 
+test("the sandbox cannot be the repository root itself", () => {
+  const repo = mkdtempSync(join(tmpdir(), "nb-repo-"));
+  const r = assertIsolated(repo, repo);
+  assert.equal(r.ok, false, "sandbox === repo is maximal contamination");
+  assert.ok(r.problems.length > 0);
+  // Verify the message doesn't create a nonsensical "inside at itself" phrasing
+  const msg = r.problems[0];
+  assert.ok(msg, "first problem should have a clear message");
+  rmSync(repo, { recursive: true, force: true });
+});
+
 test("the exact files that caused the original leak are detected", () => {
   for (const name of ["CLAUDE.md", ".claude", "skills"]) {
     const dir = mkdtempSync(join(tmpdir(), "nb-iso-"));
