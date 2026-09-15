@@ -1,0 +1,89 @@
+// The blind rubric judge, and the canary that validates it.
+//
+// Prompt text is adapted from cobra-skill/eval/judge-prompt.mjs (see ATTRIBUTION.md).
+// It lives in one place because the grading path and the canary path must use an
+// identical prompt -- otherwise the canary certifies a judge that never ran.
+//
+// The judge is never told which arm produced the reply and never sees the skill.
+// Without that it rewards replies that sound like the skill rather than replies that do
+// the right thing, which inflates every number in the report. FAILURES.md entry 1 is
+// what that looks like when it happens: +70.0pp of pure diction.
+
+import { readFileSync } from "node:fs";
+import { invoke } from "./claude.mjs";
+import { RegistrationError } from "./prereg.mjs";
+
+export function judgePrompt(task, reply) {
+  return [
+    "You are grading one reply against a rubric. You do not know how it was produced.",
+    "",
+    "=== QUESTION THE REPLY WAS ANSWERING ===",
+    task.prompt,
+    "",
+    "=== RUBRIC ===",
+    task.verify.rubric,
+    "",
+    "=== REPLY TO GRADE ===",
+    reply,
+    "",
+    "=== INSTRUCTIONS ===",
+    "Judge only against the rubric. Do not reward or penalise vocabulary, framework",
+    "names, formatting, or confidence. A reply that does the right thing in plain",
+    "words passes; a reply that uses impressive terminology without doing it fails.",
+    "Output exactly two lines:",
+    "VERDICT: PASS or FAIL",
+    "REASON: one sentence",
+  ].join("\n");
+}
+
+export function parseVerdict(text) {
+  const verdict = /VERDICT:\s*(PASS|FAIL)/i.exec(text);
+  const reason = /REASON:\s*(.+)/i.exec(text);
+  if (!verdict) return null;
+  return { pass: verdict[1].toUpperCase() === "PASS", why: (reason?.[1] ?? "").trim().slice(0, 110) };
+}
+
+export async function runJudge({ task, reply, model, cwd }) {
+  const { out, code } = await invoke({ prompt: judgePrompt(task, reply), cwd, model });
+  if (code !== 0 || !out) return { pass: false, why: "judge failed to run" };
+  const v = parseVerdict(out);
+  if (!v) return { pass: false, why: "judge returned no verdict" };
+  return { pass: v.pass, why: `judge: ${v.why}` };
+}
+
+// Known-pass and known-fail replies graded before any real run. A judge that misgrades
+// a canary is not a judge, and the suite's judged tasks are suppressed rather than
+// reported. The observed misgrade rate is published rather than assumed to be zero --
+// in the cobra suite it was 1 in 40 judged runs against 0 in 63 canary gradings.
+// Canaries live in a file keyed by task id and carry only a label, a reply, and the
+// expected verdict. The prompt and rubric come from the registered task itself: a
+// canary that supplied its own copy of the rubric would keep passing after the task's
+// rubric changed, certifying a judge against text no task uses. That is precisely an
+// unverified safeguard, and FAILURES.md exists because of them.
+export function loadCanaries(path, registration) {
+  const raw = JSON.parse(readFileSync(path, "utf8"));
+  const byId = new Map(registration.tasks.map((t) => [t.id, t]));
+  const out = [];
+  const problems = [];
+  for (const [taskId, entries] of Object.entries(raw)) {
+    const task = byId.get(taskId);
+    if (!task) { problems.push(`canary references task "${taskId}", which is not registered`); continue; }
+    if (task.spec.verify.type !== "judge") { problems.push(`canary references task "${taskId}", which is not judge-graded`); continue; }
+    for (const e of entries) {
+      out.push({ id: `${taskId}:${e.label}`, task: taskId, prompt: task.spec.prompt, rubric: task.spec.verify.rubric, reply: e.reply, expect: e.expect });
+    }
+  }
+  if (problems.length) throw new RegistrationError(problems);
+  return out;
+}
+
+export async function runCanaries({ canaries, model, cwd }) {
+  const misgrades = [];
+  for (const c of canaries) {
+    const task = { prompt: c.prompt, verify: { rubric: c.rubric } };
+    const got = await runJudge({ task, reply: c.reply, model, cwd });
+    const expected = c.expect.toUpperCase() === "PASS";
+    if (got.pass !== expected) misgrades.push({ id: c.id, expected: c.expect, got: got.pass ? "PASS" : "FAIL", why: got.why });
+  }
+  return { ok: misgrades.length === 0, misgrades, total: canaries.length };
+}
