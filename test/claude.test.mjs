@@ -71,3 +71,15 @@ test("a missing binary returns code -1 rather than crashing the run", async () =
   assert.equal(r.code, -1);
   delete process.env.NULLBENCH_CLAUDE_BIN;
 });
+
+test("concurrent stub invocations do not lose updates to the shared state file", async () => {
+  const plan = { rules: [{ promptIncludes: "x", arm: "any", outs: ["a", "b", "c"] }], default: { outs: ["z"] } };
+  await withStub(plan, async (dir) => {
+    const calls = Array.from({ length: 8 }, () => invoke({ prompt: "x", cwd: dir, model: "sonnet" }));
+    const results = await Promise.all(calls);
+    const outs = results.map((r) => r.out).sort();
+    // 8 calls cycling through 3 outs: outs[0] and outs[1] three times each, outs[2] twice.
+    // Order is genuinely nondeterministic under concurrency, so assert the multiset only.
+    assert.deepEqual(outs, ["a", "a", "a", "b", "b", "b", "c", "c"]);
+  });
+});
