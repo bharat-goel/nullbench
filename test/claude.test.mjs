@@ -72,11 +72,18 @@ test("a missing binary returns code -1 rather than crashing the run", async () =
   delete process.env.NULLBENCH_CLAUDE_BIN;
 });
 
+// Stable substring of the stub's stderr message when it gives up waiting for the lock
+// and proceeds unlocked (see tools/stub-claude.mjs). Matching on this fragment rather
+// than the full sentence means rewording that message later can't silently disable
+// the check below.
+const STALE_LOCK_MARKER = "breaking stale lock";
+
 test("concurrent stub invocations do not lose updates to the shared state file", async () => {
   // A longer cycle makes a lost update far less likely to coincidentally land on the
   // correct value anyway; many batches of high concurrency give the race repeated,
   // independent chances to be hit. (8 concurrent calls over a 3-element cycle detected
-  // a deliberately-removed lock in only ~60-80% of runs -- not a reliable gate.)
+  // a deliberately-removed lock in 1 of 5 runs in one measurement, and 3 of 5 in
+  // another -- not a reliable gate either way.)
   const outs = ["a", "b", "c", "d", "e", "f", "g"];
   const BATCHES = 6;
   const PER_BATCH = 32;
@@ -86,13 +93,28 @@ test("concurrent stub invocations do not lose updates to the shared state file",
     for (let b = 0; b < BATCHES; b++) {
       const calls = Array.from({ length: PER_BATCH }, () => invoke({ prompt: "x", cwd: dir, model: "sonnet" }));
       const results = await Promise.all(calls);
-      all.push(...results.map((r) => r.out));
+      all.push(...results);
     }
+    // Check this before the multiset assertion: a broken lock (from 32-way contention
+    // outlasting the stub's ~2s wait on a loaded machine) reproduces the same lost-update
+    // symptom as a genuinely missing lock. Failing here first tells the two apart instead
+    // of leaving a bare multiset mismatch that looks identical to a real regression.
+    const brokeLock = all.filter((r) => r.err.includes(STALE_LOCK_MARKER));
+    assert.equal(
+      brokeLock.length,
+      0,
+      `${brokeLock.length} of ${all.length} stub calls broke the state-file lock after timing out ` +
+        `(stderr contained "${STALE_LOCK_MARKER}"). This means the run was too slow for the lock's ` +
+        `~2s deadline under this batch's contention, not that the lock is broken -- rerun, or lower ` +
+        `contention, rather than reading the multiset failure below as a real regression.`
+    );
+
+    const outVals = all.map((r) => r.out);
     const total = BATCHES * PER_BATCH;
     const expectedCounts = new Array(outs.length).fill(0);
     for (let i = 0; i < total; i++) expectedCounts[i % outs.length]++;
     const expected = outs.flatMap((o, idx) => Array(expectedCounts[idx]).fill(o)).sort();
     // Order is genuinely nondeterministic under concurrency, so assert the multiset only.
-    assert.deepEqual(all.sort(), expected);
+    assert.deepEqual(outVals.sort(), expected);
   });
 });
