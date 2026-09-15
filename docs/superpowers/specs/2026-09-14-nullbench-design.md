@@ -346,6 +346,14 @@ with required canaries; the offline test suite; the two live tests; `FAILURES.md
 Trigger evaluation; `nullbench init` scaffolding; cross-model comparison; a
 cross-family judge; any provider other than the `claude` CLI.
 
+### Deferred, decided 2026-09-14
+
+Amending `cobra-skill`'s README to reflect a suppressed average. Success criterion 1
+implies the current `+26.7pp` headline should change, but that is a separate task in a
+separate repository and is not a v1 blocker. nullbench v1 ships with
+`examples/cobra/` demonstrating the suppression; what cobra's README says about it is
+decided afterwards.
+
 ### Explicitly never
 
 Leaderboards, a hosted service, a web UI, a score that collapses a suite to one number.
