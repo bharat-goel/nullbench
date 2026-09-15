@@ -10,8 +10,11 @@
 // A reply that says "don't investigate yet, stabilise first" mentions diagnosis before
 // rollback while advocating the opposite. Naive ordering marks the better answer wrong.
 const NEGATIONS = [
-  // "not " is word-anchored with a leading space: without it, "you cannot roll back"
-  // reads as a negated rollback because "cannot " contains "not ".
+  // " not " is word-anchored with a leading space. This is a trade-off: the leading space
+  // stops "cannot" from wrongly negating a nearby pattern when "cannot" negates a different
+  // clause (e.g., "Latency cannot keep climbing, so roll back" — "cannot" negates climbing,
+  // not rollback). But substring matching cannot distinguish this from genuine "cannot <pattern>"
+  // negations that should suppress the pattern. That distinction belongs in the rubric judge.
   "don't", "do not", " not ", "never", "avoid", "rather than", "instead of",
   "without", "no need to", "before you", "premature", "resist", "skip",
   "hold off", "defer", "later", "only once", "only after", "after you",

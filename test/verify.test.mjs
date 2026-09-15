@@ -42,6 +42,21 @@ test("ordered: no stabilising action at all is a failure", () => {
   assert.equal(verify(spec, "Just investigate it.").pass, false);
 });
 
+test("ordered: leading space in ' not ' prevents false suppression by 'cannot'", () => {
+  // The leading space in " not " is load-bearing. Without it, "cannot" inside a phrase
+  // like "Latency cannot keep climbing, so roll back now, then investigate." would match
+  // "not " (from "cannot "), wrongly suppressing the rollback pattern.
+  // This test guards against regressing to "not " without the leading space.
+  const spec = { type: "ordered", before: ["roll back"], after: ["investigate"] };
+  const reply = "Latency cannot keep climbing, so roll back now, then investigate.";
+  assert.equal(verify(spec, reply).pass, true, "should pass because 'cannot' negates 'keep climbing', not 'roll back'");
+});
+
+test("any: empty patterns list", () => {
+  const spec = { type: "any", patterns: [] };
+  assert.equal(verify(spec, "Any output at all.").pass, false);
+});
+
 test("judge specs and unknown types throw rather than silently pass", () => {
   assert.throws(() => verify({ type: "judge", rubric: "x" }, "reply"), /judge/);
   assert.throws(() => verify({ type: "banana" }, "reply"), /unknown verifier/);
