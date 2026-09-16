@@ -36,6 +36,10 @@ test("PLACEBO: an irrelevant skill must produce a null", { timeout: 1_800_000 },
   await main([dir, "--yes"], capture());
   const { records } = latestRecords(dir);
   const rows = aggregate(records, [{ id: "reasoning", kind: "signal", predict: "no-effect" }]);
+  // The loop below passes vacuously on an empty `rows` -- a renamed task id, or a batch
+  // that graded nothing, would read as "the placebo produced a null" when in fact
+  // nothing was measured at all. Assert we actually have the row before judging it.
+  assert.equal(rows.length, 1, "expected exactly one aggregated row for the `reasoning` task; a placebo bracket that measured nothing must fail, not pass");
   for (const r of rows) {
     assert.equal(discriminates(r.ci), false,
       `a placebo skill produced a discriminating delta (${JSON.stringify(r.ci)}). ` +
