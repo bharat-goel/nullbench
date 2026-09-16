@@ -1,0 +1,12 @@
+{
+  "id": "reasoning",
+  "skill": "iso-date-formatting",
+  "kind": "signal",
+  "prompt": "A tank holds 128 liters when full. It is currently 3/8 full. How many liters of water must be added to fill it completely? Answer with the number of liters only.",
+  "rationale": "A plain arithmetic word problem with no dates, timestamps, or serialization in it anywhere. The ISO-8601 skill has nothing to attach to, so the control and treatment arms should land at the same pass rate. This is the task the placebo test aggregates over, predicting no-effect.",
+  "verify": {
+    "type": "any",
+    "patterns": ["80"],
+    "maxWords": 50
+  }
+}

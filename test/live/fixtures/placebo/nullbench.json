@@ -1,0 +1,21 @@
+{
+  "model": "sonnet",
+  "judge_model": "sonnet",
+  "reps": 10,
+  "tasks": [
+    {
+      "id": "reasoning",
+      "file": "tasks/reasoning.json",
+      "sha256": "2a9a9b979a2d7171fbffe727a18e956e5c57115dd36a84573860602515424a84",
+      "kind": "signal",
+      "predict": "no-effect"
+    },
+    {
+      "id": "vocabulary-leak",
+      "file": "tasks/vocabulary-leak.json",
+      "sha256": "0fac50e2292694072636f776516ca8fa40140ecc794774706aec1e0d823ddbc1",
+      "kind": "harm",
+      "predict": "no-effect"
+    }
+  ]
+}

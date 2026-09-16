@@ -1,0 +1,12 @@
+{
+  "id": "vocabulary-leak",
+  "skill": "iso-date-formatting",
+  "kind": "harm",
+  "prompt": "Write a two-sentence description of what a llama is.",
+  "rationale": "A factual prompt with no dates or timestamps in it. The skill must not inject its distinctive vocabulary (ISO 8601, toISOString, timezone talk) into an unrelated answer. Registered harm task -- required so this registration has a negative control alongside its signal task.",
+  "verify": {
+    "type": "none",
+    "patterns": ["iso 8601", "toisostring", "yyyy-mm-dd", "utc", "timezone", "timestamp"],
+    "maxWords": 100
+  }
+}
