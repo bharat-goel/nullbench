@@ -205,26 +205,42 @@ function countSharedSandboxes() {
 }
 
 test("a rejecting runSuite call does not leak the shared sandbox on disk", async () => {
-  const dir = env({ default: { outs: ["a reply"] } });
-  const fixtureRoot = mkdtempSync(join(tmpdir(), "nb-fxroot-"));
-  mkdirSync(join(fixtureRoot, "dirty-fixture"));
-  writeFileSync(join(fixtureRoot, "dirty-fixture", "CLAUDE.md"), "# not allowed");
-  const withFixture = {
-    ...registration,
-    tasks: [{
-      id: "fx", kind: "signal", predict: "helps",
-      spec: { id: "fx", prompt: "fixture task", fixture: "dirty-fixture", verify: { type: "any", patterns: ["reply"] } },
-    }],
-  };
-  const before = countSharedSandboxes();
-  await assert.rejects(
-    () => runSuite({ registration: withFixture, requested: { ...requested, taskIds: ["fx"] }, skillFile: join(dir, "SKILL.md"), fixtureRoot }),
-    /not isolated/,
-  );
-  const after = countSharedSandboxes();
-  assert.equal(after, before, "the shared sandbox mkdtemp'd at the top of runSuite must be cleaned up even when a worker rejects");
-  clean(dir);
-  rmSync(fixtureRoot, { recursive: true, force: true });
+  // `npm test` runs test files in separate, parallel processes. This test's leak check
+  // counts entries in the process-global OS temp dir, and runner.test.mjs is no longer
+  // the only caller of runSuite once cli.test.mjs exists -- a concurrent shared sandbox
+  // from another file's in-flight runSuite call, alive at the "after" sample, reads as
+  // a leak here for a reason nowhere in this test's own body. os.tmpdir() re-reads
+  // process.env.TMPDIR on every call on POSIX, so point it at a private, empty
+  // directory for the duration of this test and count there instead.
+  const isolatedTmp = mkdtempSync(join(tmpdir(), "nb-isolated-tmpdir-"));
+  const prevTmpdir = process.env.TMPDIR;
+  process.env.TMPDIR = isolatedTmp;
+  try {
+    const dir = env({ default: { outs: ["a reply"] } });
+    const fixtureRoot = mkdtempSync(join(tmpdir(), "nb-fxroot-"));
+    mkdirSync(join(fixtureRoot, "dirty-fixture"));
+    writeFileSync(join(fixtureRoot, "dirty-fixture", "CLAUDE.md"), "# not allowed");
+    const withFixture = {
+      ...registration,
+      tasks: [{
+        id: "fx", kind: "signal", predict: "helps",
+        spec: { id: "fx", prompt: "fixture task", fixture: "dirty-fixture", verify: { type: "any", patterns: ["reply"] } },
+      }],
+    };
+    const before = countSharedSandboxes();
+    await assert.rejects(
+      () => runSuite({ registration: withFixture, requested: { ...requested, taskIds: ["fx"] }, skillFile: join(dir, "SKILL.md"), fixtureRoot }),
+      /not isolated/,
+    );
+    const after = countSharedSandboxes();
+    assert.equal(after, before, "the shared sandbox mkdtemp'd at the top of runSuite must be cleaned up even when a worker rejects");
+    clean(dir);
+    rmSync(fixtureRoot, { recursive: true, force: true });
+  } finally {
+    if (prevTmpdir === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = prevTmpdir;
+    rmSync(isolatedTmp, { recursive: true, force: true });
+  }
 });
 
 test("gradedCounts reports per-arm graded totals", () => {
