@@ -15,7 +15,7 @@ import { runJudge } from "./judge.mjs";
 
 // A task may declare a fixture: a small project copied fresh for every run, so a run
 // that edits files cannot contaminate the next one.
-function makeCwd(task, fixtureRoot, shared) {
+function makeCwd(task, fixtureRoot, shared, repoRoot) {
   if (!task.spec.fixture) return { cwd: shared, temporary: false };
   const src = join(fixtureRoot, task.spec.fixture);
   if (!existsSync(src)) {
@@ -30,7 +30,11 @@ function makeCwd(task, fixtureRoot, shared) {
   // rather than inspected for whether the contents are actually dangerous. The one
   // fixture this project uses (cobra's failing-suite) contains only README.md,
   // package.json, prorate.js and test.js, so nothing real is blocked by this.
-  const iso = assertIsolated(dir, fixtureRoot);
+  //
+  // Isolation is checked against repoRoot, not fixtureRoot: fixtureRoot only resolves
+  // where fixture sources live (e.g. cobra-skill/eval/), and a sandbox can sit inside
+  // the repository above that directory without ever being a descendant of it.
+  const iso = assertIsolated(dir, repoRoot);
   if (!iso.ok) {
     rmSync(dir, { recursive: true, force: true });
     throw new Error(`fixture sandbox for "${task.id}" is not isolated:\n  - ${iso.problems.join("\n  - ")}`);
@@ -48,14 +52,16 @@ export function gradedCounts(records) {
 }
 
 export async function runSuite({
-  registration, requested, skillFile, fixtureRoot = ".", rawDir = null,
+  registration, requested, skillFile, fixtureRoot = ".", repoRoot = fixtureRoot, rawDir = null,
   concurrency = 4, onProgress = () => {},
 }) {
   const shared = mkdtempSync(join(tmpdir(), "nullbench-"));
   // The shared sandbox is where every non-fixture task runs -- the common case, and
   // the module's primary defense against control-arm contamination. It gets the same
-  // isolation check makeCwd already applies to fixture sandboxes.
-  const iso = assertIsolated(shared, fixtureRoot);
+  // isolation check makeCwd already applies to fixture sandboxes. repoRoot defaults to
+  // fixtureRoot so every existing caller (and every Task 10 test) keeps its old
+  // behavior; the CLI passes a real, resolved repository root instead.
+  const iso = assertIsolated(shared, repoRoot);
   if (!iso.ok) {
     rmSync(shared, { recursive: true, force: true });
     throw new Error(`shared sandbox is not isolated:\n  - ${iso.problems.join("\n  - ")}`);
@@ -77,7 +83,7 @@ export async function runSuite({
   async function worker(queue) {
     while (queue.length) {
       const { task, cond, rep } = queue.shift();
-      const { cwd, temporary } = makeCwd(task, fixtureRoot, shared);
+      const { cwd, temporary } = makeCwd(task, fixtureRoot, shared, repoRoot);
       const { out, err, code } = await invoke({
         prompt: task.spec.prompt,
         systemPromptFile: cond === "treatment" ? skillFile : null,

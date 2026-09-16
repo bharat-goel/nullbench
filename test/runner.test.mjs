@@ -99,6 +99,22 @@ test("runSuite rejects a shared sandbox that is not isolated", async () => {
   clean(dir);
 });
 
+test("runSuite rejects a sandbox inside the repo root even when it is outside the suite/fixture directory", async () => {
+  // fixtureRoot here stands in for a suite directory (e.g. cobra-skill/eval/) that
+  // lives INSIDE a repository. The shared sandbox is mkdtemp'd under tmpdir(), which
+  // is a sibling of fixtureRoot, not a descendant -- so checking isolation against
+  // fixtureRoot alone (the pre-Task-11 behavior) would read this as isolated. Passing
+  // the real repoRoot (tmpdir(), standing in for the repository root) must catch it.
+  const dir = env({ default: { outs: ["a reply"] } });
+  const fixtureRoot = mkdtempSync(join(tmpdir(), "nb-fxroot-"));
+  await assert.rejects(
+    () => runSuite({ registration, requested, skillFile: join(dir, "SKILL.md"), fixtureRoot, repoRoot: tmpdir() }),
+    /not isolated/,
+  );
+  clean(dir);
+  rmSync(fixtureRoot, { recursive: true, force: true });
+});
+
 test("a task declaring a fixture that does not exist fails with a clear error", async () => {
   const dir = env({ default: { outs: ["a reply"] } });
   const fixtureRoot = mkdtempSync(join(tmpdir(), "nb-fxroot-"));
