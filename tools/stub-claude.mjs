@@ -1,6 +1,15 @@
 #!/usr/bin/env node
 // A fake `claude` binary. Replays scripted replies so the protocol layer can be tested
 // with no network and no spend. Contract is documented in the v1 plan, Task 5.
+//
+// NULLBENCH_STUB_ECHO_CWD: when set (to any value), the stub appends a second line to
+// stdout after the scripted reply:
+//   <cwd-files>a,b,c</cwd-files>
+// listing the sorted directory entries of its own process.cwd(). This exists to let a
+// test observe which directory a run actually executed in -- the scripted outs are the
+// same regardless of cwd, so without this a fixture copy could silently fail to land
+// and every test would still pass against an empty sandbox. Default (env unset)
+// behaviour is byte-identical to before this existed: no extra line, no readdirSync.
 
 import {
   readFileSync,
@@ -10,6 +19,7 @@ import {
   openSync,
   closeSync,
   unlinkSync,
+  readdirSync,
 } from "node:fs";
 
 const plan = JSON.parse(readFileSync(process.env.NULLBENCH_STUB_PLAN, "utf8"));
@@ -96,5 +106,9 @@ try {
 }
 
 const outs = rule.outs ?? [""];
-process.stdout.write(outs[i % outs.length]);
+let output = outs[i % outs.length];
+if (process.env.NULLBENCH_STUB_ECHO_CWD) {
+  output += `\n<cwd-files>${readdirSync(process.cwd()).sort().join(",")}</cwd-files>`;
+}
+process.stdout.write(output);
 process.exit(rule.code ?? 0);

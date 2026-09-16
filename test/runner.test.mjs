@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -122,11 +122,15 @@ test("a task declaring a fixture that does not exist fails with a clear error", 
   rmSync(fixtureRoot, { recursive: true, force: true });
 });
 
-test("a task declaring a fixture that exists runs normally", async () => {
+test("a task declaring a fixture that exists runs normally, and the copy actually lands", async () => {
   const dir = env({ default: { outs: ["a reply"] } });
   const fixtureRoot = mkdtempSync(join(tmpdir(), "nb-fxroot-"));
   mkdirSync(join(fixtureRoot, "ok-fixture"));
   writeFileSync(join(fixtureRoot, "ok-fixture", "README.md"), "a fixture project");
+  // A distinctively named file the stub can report back via NULLBENCH_STUB_ECHO_CWD --
+  // the scripted "a reply" output is identical regardless of cwd, so without this the
+  // test would pass even against an empty sandbox if the fixture copy silently broke.
+  writeFileSync(join(fixtureRoot, "ok-fixture", "fixture-marker.txt"), "marker");
   const withFixture = {
     ...registration,
     tasks: [{
@@ -134,9 +138,17 @@ test("a task declaring a fixture that exists runs normally", async () => {
       spec: { id: "fx", prompt: "fixture task", fixture: "ok-fixture", verify: { type: "any", patterns: ["reply"] } },
     }],
   };
-  const { records } = await runSuite({ registration: withFixture, requested: { ...requested, taskIds: ["fx"] }, skillFile: join(dir, "SKILL.md"), fixtureRoot });
+  const raw = join(dir, "raw");
+  process.env.NULLBENCH_STUB_ECHO_CWD = "1";
+  const { records } = await runSuite({
+    registration: withFixture, requested: { ...requested, taskIds: ["fx"] },
+    skillFile: join(dir, "SKILL.md"), fixtureRoot, rawDir: raw,
+  });
+  delete process.env.NULLBENCH_STUB_ECHO_CWD;
   assert.equal(records.length, 8);
   assert.ok(records.every((r) => r.pass));
+  const reply = readFileSync(join(raw, "fx__control__1.txt"), "utf8");
+  assert.match(reply, /fixture-marker\.txt/, "the run's actual cwd must contain the fixture's files, not an empty sandbox");
   clean(dir);
   rmSync(fixtureRoot, { recursive: true, force: true });
 });
