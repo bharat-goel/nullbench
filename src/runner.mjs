@@ -24,7 +24,12 @@ function makeCwd(task, fixtureRoot, shared) {
   const dir = mkdtempSync(join(tmpdir(), "nullbench-fx-"));
   cpSync(src, dir, { recursive: true });
   // A fixture is a real project copied in, and it may carry its own CLAUDE.md or
-  // .claude directory. Every cwd is checked, not just the shared one.
+  // .claude directory. Every cwd is checked, not just the shared one. This is
+  // deliberately strict: a fixture carrying CLAUDE.md, .claude, skills/, or AGENTS.md
+  // is indistinguishable by inspection from actual leakage, so it is refused outright
+  // rather than inspected for whether the contents are actually dangerous. The one
+  // fixture this project uses (cobra's failing-suite) contains only README.md,
+  // package.json, prorate.js and test.js, so nothing real is blocked by this.
   const iso = assertIsolated(dir, fixtureRoot);
   if (!iso.ok) {
     rmSync(dir, { recursive: true, force: true });
@@ -47,6 +52,14 @@ export async function runSuite({
   concurrency = 4, onProgress = () => {},
 }) {
   const shared = mkdtempSync(join(tmpdir(), "nullbench-"));
+  // The shared sandbox is where every non-fixture task runs -- the common case, and
+  // the module's primary defense against control-arm contamination. It gets the same
+  // isolation check makeCwd already applies to fixture sandboxes.
+  const iso = assertIsolated(shared, fixtureRoot);
+  if (!iso.ok) {
+    rmSync(shared, { recursive: true, force: true });
+    throw new Error(`shared sandbox is not isolated:\n  - ${iso.problems.join("\n  - ")}`);
+  }
   if (rawDir) mkdirSync(rawDir, { recursive: true });
 
   const byId = new Map(registration.tasks.map((t) => [t.id, t]));
