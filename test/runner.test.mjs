@@ -140,11 +140,18 @@ test("a task declaring a fixture that exists runs normally, and the copy actuall
   };
   const raw = join(dir, "raw");
   process.env.NULLBENCH_STUB_ECHO_CWD = "1";
-  const { records } = await runSuite({
-    registration: withFixture, requested: { ...requested, taskIds: ["fx"] },
-    skillFile: join(dir, "SKILL.md"), fixtureRoot, rawDir: raw,
-  });
-  delete process.env.NULLBENCH_STUB_ECHO_CWD;
+  let records;
+  try {
+    ({ records } = await runSuite({
+      registration: withFixture, requested: { ...requested, taskIds: ["fx"] },
+      skillFile: join(dir, "SKILL.md"), fixtureRoot, rawDir: raw,
+    }));
+  } finally {
+    // Node runs every test in this file in one process -- a throw between set and
+    // delete would leak the var into later tests, silently corrupting any later
+    // assertion that checks stub output for byte-identity.
+    delete process.env.NULLBENCH_STUB_ECHO_CWD;
+  }
   assert.equal(records.length, 8);
   assert.ok(records.every((r) => r.pass));
   const reply = readFileSync(join(raw, "fx__control__1.txt"), "utf8");
@@ -169,6 +176,37 @@ test("a fixture carrying CLAUDE.md is rejected as not isolated", async () => {
     () => runSuite({ registration: withFixture, requested: { ...requested, taskIds: ["fx"] }, skillFile: join(dir, "SKILL.md"), fixtureRoot }),
     /not isolated/,
   );
+  clean(dir);
+  rmSync(fixtureRoot, { recursive: true, force: true });
+});
+
+// Only the shared sandbox's own prefix -- "nullbench-fx-" fixture sandboxes are a
+// separate, already-cleaned-up lifecycle (makeCwd removes them itself, on both success
+// and isolation failure) and must not be counted here, or a real leak of the shared
+// sandbox could hide behind fixture sandboxes correctly appearing and disappearing.
+function countSharedSandboxes() {
+  return readdirSync(tmpdir()).filter((f) => /^nullbench-(?!fx-)/.test(f)).length;
+}
+
+test("a rejecting runSuite call does not leak the shared sandbox on disk", async () => {
+  const dir = env({ default: { outs: ["a reply"] } });
+  const fixtureRoot = mkdtempSync(join(tmpdir(), "nb-fxroot-"));
+  mkdirSync(join(fixtureRoot, "dirty-fixture"));
+  writeFileSync(join(fixtureRoot, "dirty-fixture", "CLAUDE.md"), "# not allowed");
+  const withFixture = {
+    ...registration,
+    tasks: [{
+      id: "fx", kind: "signal", predict: "helps",
+      spec: { id: "fx", prompt: "fixture task", fixture: "dirty-fixture", verify: { type: "any", patterns: ["reply"] } },
+    }],
+  };
+  const before = countSharedSandboxes();
+  await assert.rejects(
+    () => runSuite({ registration: withFixture, requested: { ...requested, taskIds: ["fx"] }, skillFile: join(dir, "SKILL.md"), fixtureRoot }),
+    /not isolated/,
+  );
+  const after = countSharedSandboxes();
+  assert.equal(after, before, "the shared sandbox mkdtemp'd at the top of runSuite must be cleaned up even when a worker rejects");
   clean(dir);
   rmSync(fixtureRoot, { recursive: true, force: true });
 });

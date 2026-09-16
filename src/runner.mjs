@@ -105,7 +105,13 @@ export async function runSuite({
   }
 
   const queue = [...jobs];
-  await Promise.all(Array.from({ length: Math.min(concurrency, queue.length) }, () => worker(queue)));
-  rmSync(shared, { recursive: true, force: true });
+  try {
+    await Promise.all(Array.from({ length: Math.min(concurrency, queue.length) }, () => worker(queue)));
+  } finally {
+    // A worker throws (e.g. a fixture failing assertIsolated), which rejects
+    // Promise.all -- without `finally`, the shared sandbox mkdtemp'd at the top of
+    // this function is left behind on disk permanently, one leak per rejecting call.
+    rmSync(shared, { recursive: true, force: true });
+  }
   return { records };
 }
