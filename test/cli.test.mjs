@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync, readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -84,8 +84,17 @@ test("findRepoRoot terminates at the filesystem root instead of looping", () => 
 
 function setUpSuite() {
   const dir = mkdtempSync(join(tmpdir(), "nb-cli-crash-"));
+  // skillFile is a DIRECTORY, not a file with restrictive permissions. A chmod-based
+  // EACCES is uid-dependent -- root (routine in Docker-based CI, and nullbench is meant
+  // to run in other people's CI) ignores permission bits entirely, so readFileSync
+  // would succeed, the reporting stage would never throw, and this test would fail on
+  // its own setup rather than on the behavior it pins. A directory makes
+  // readFileSync(skillFile, "utf8") fail with EISDIR on any uid, root included.
+  // existsSync(skillFile) at cli.mjs's structural check is still true for a directory,
+  // so the run still reaches and pays for the batch before this bites -- do not
+  // "simplify" this back to chmod.
   const skillFile = join(dir, "SKILL.md");
-  writeFileSync(skillFile, "# demo skill\n");
+  mkdirSync(skillFile);
   const taskSpec = { prompt: "the smoke test question", verify: { type: "any", patterns: ["denominator"] } };
   const taskPath = join(dir, "sig.json");
   writeFileSync(taskPath, JSON.stringify(taskSpec));
@@ -101,11 +110,10 @@ function setUpSuite() {
 
 test("a reporting-stage crash still appends to the ledger and exits non-zero, not as an unhandled rejection", () => {
   const { dir, skillFile, planPath } = setUpSuite();
-  // Force the reporting stage's readFileSync(skillFile) to fail with EACCES, the same
-  // mechanism the review used live. runSuite itself never reads this file's contents
-  // (the stub only checks for the --append-system-prompt-file flag), so the run
-  // completes and pays for its batch before this bites.
-  chmodSync(skillFile, 0o000);
+  // skillFile is a directory (see setUpSuite), so the reporting stage's
+  // readFileSync(skillFile) fails with EISDIR. runSuite itself never reads this file's
+  // contents (the stub only checks for the --append-system-prompt-file flag), so the
+  // run completes and pays for its batch before this bites.
   try {
     const result = spawnSync(process.execPath, [BIN, dir, "--yes"], {
       encoding: "utf8",
@@ -117,7 +125,7 @@ test("a reporting-stage crash still appends to the ledger and exits non-zero, no
       },
     });
     assert.equal(result.status, 1, `expected exit code 1, got ${result.status}\nstderr:\n${result.stderr}`);
-    assert.match(result.stderr, /EACCES/, "the original error must be surfaced, not swallowed");
+    assert.match(result.stderr, /EISDIR/, "the original error must be surfaced, not swallowed");
     // Node's exit code for a top-level unhandled rejection happens to already be 1 on
     // this runtime, so status alone does not distinguish "caught and reported cleanly"
     // from "escaped as an unhandled rejection" -- both would pass a bare status check.
@@ -130,7 +138,6 @@ test("a reporting-stage crash still appends to the ledger and exits non-zero, no
     assert.match(ledger, /# Run ledger/);
     assert.match(ledger, /model=sonnet judge=sonnet reps=4/, "the ledger append must still happen even though reporting crashed");
   } finally {
-    chmodSync(skillFile, 0o644);
     rmSync(dir, { recursive: true, force: true });
   }
 });
