@@ -1,0 +1,146 @@
+import { test, afterEach } from "node:test";
+import assert from "node:assert/strict";
+import { existsSync, rmSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
+import { main } from "../../src/cli.mjs";
+import { makeSuite, useStub, clearStub, capture, ledger, SIGNAL, SIGNAL2, HARM } from "./helpers.mjs";
+
+afterEach(clearStub);
+
+const ALL = [SIGNAL, SIGNAL2, HARM];
+
+// Both signal tasks discriminate: treatment says the magic word, control does not.
+const WORKING = {
+  rules: [
+    { promptIncludes: "three caught", arm: "treatment", outs: ["the denominator is missing"] },
+    { promptIncludes: "three caught", arm: "control", outs: ["looks fine"] },
+    { promptIncludes: "coverage gate", arm: "treatment", outs: ["that invites gaming"] },
+    { promptIncludes: "coverage gate", arm: "control", outs: ["seems reasonable"] },
+  ],
+  default: { outs: ["a clean neutral answer"] },
+};
+
+// sig is at ceiling in both arms; sig2 still discriminates.
+const ONE_AT_CEILING = {
+  rules: [
+    { promptIncludes: "three caught", arm: "any", outs: ["the denominator is missing"] },
+    { promptIncludes: "coverage gate", arm: "treatment", outs: ["that invites gaming"] },
+    { promptIncludes: "coverage gate", arm: "control", outs: ["seems reasonable"] },
+  ],
+  default: { outs: ["a clean neutral answer"] },
+};
+
+test("a clean run is CONFIRMATORY, prints the average, and lands in the ledger", async () => {
+  const dir = makeSuite({ tasks: ALL });
+  useStub(dir, WORKING);
+  const cap = capture();
+  const code = await main([dir, "--yes"], cap);
+  assert.equal(code, 0);
+  assert.match(cap.text(), /CONFIRMATORY/);
+  // Both signal tasks discriminate, so the average MUST print here. Without this the
+  // suppression assertions elsewhere are unfalsifiable.
+  assert.match(cap.text(), /Average across discriminating signal tasks/);
+  assert.match(cap.text(), /no interval/);
+  assert.match(ledger(dir), /CONFIRMATORY/);
+});
+
+test("TAMPER: editing a task after registration forces EXPLORATORY and no average", async () => {
+  // Uses the WORKING plan, where the average would otherwise print -- so the
+  // suppression assertion below actually discriminates.
+  const dir = makeSuite({ tasks: ALL, corrupt: "sig" });
+  useStub(dir, WORKING);
+  const cap = capture();
+  const code = await main([dir, "--yes"], cap);
+  assert.equal(code, 0);
+  assert.match(cap.text(), /EXPLORATORY/);
+  assert.match(cap.text(), /average across signal tasks: suppressed/i);
+  assert.ok(!/Average across discriminating/.test(cap.text()),
+    "an exploratory run must not print an average it would have printed when clean");
+});
+
+test("FILTER: running a subset of registered tasks forces EXPLORATORY", async () => {
+  const dir = makeSuite({ tasks: ALL });
+  useStub(dir, WORKING);
+  const cap = capture();
+  await main([dir, "--yes", "--task", "sig"], cap);
+  assert.match(cap.text(), /EXPLORATORY/);
+  assert.match(cap.text(), /task set differs/);
+});
+
+test("MISSING HARM: a suite with no negative control cannot be confirmed", async () => {
+  const dir = makeSuite({ tasks: ALL, omitHarm: true });
+  useStub(dir, WORKING);
+  const cap = capture();
+  await main([dir, "--yes"], cap);
+  assert.match(cap.text(), /EXPLORATORY/);
+  assert.match(cap.text(), /negative control/);
+});
+
+test("CEILING: the ceiling task's own row is flagged and the discriminating one is not", async () => {
+  const dir = makeSuite({ tasks: ALL });
+  useStub(dir, ONE_AT_CEILING);
+  const cap = capture();
+  await main([dir, "--yes"], cap);
+  const lines = cap.text().split("\n");
+  const sigRow = lines.find((l) => l.includes("`sig`"));
+  const sig2Row = lines.find((l) => l.includes("`sig2`"));
+  // Asserting on the ROWS, not on the presence of the word anywhere: the harm row is
+  // also at 100/100 and would satisfy a document-wide match with detection removed.
+  assert.match(sigRow, /non-discriminating/, "the ceiling signal task must be flagged");
+  assert.ok(!/non-discriminating/.test(sig2Row), "the discriminating task must not be flagged");
+  assert.match(cap.text(), /1 of 2 signal tasks discriminate/);
+});
+
+test("DEAD RUNS: a batch with too few graded runs is VOID, exits 1, and still logs", async () => {
+  const dir = makeSuite({ tasks: ALL });
+  useStub(dir, { default: { outs: [""], code: 1 } });
+  const cap = capture();
+  const code = await main([dir, "--yes"], cap);
+  assert.equal(code, 1, "a void batch must exit non-zero");
+  assert.match(cap.text(), /VOID/);
+  assert.ok(!/[+-]\d+\.\d+pp/.test(cap.text()), "no deltas printed for a void batch");
+  assert.match(ledger(dir), /VOID/, "the file drawer stays shut");
+});
+
+test("FILE DRAWER: a run that spends anything is logged; a dry run is not", async () => {
+  const dir = makeSuite({ tasks: ALL });
+  useStub(dir, WORKING);
+  await main([dir, "--dry-run"], capture());
+  assert.equal(existsSync(join(dir, "LEDGER.md")), false, "a dry run spends nothing and logs nothing");
+  await main([dir, "--yes"], capture());
+  assert.ok(ledger(dir).includes("CONFIRMATORY"));
+});
+
+test("FILE DRAWER: a crash after the batch still leaves a ledger entry", async () => {
+  // The expensive failure: the runs are paid for, then something downstream throws, and
+  // the batch vanishes. `main` wraps the post-run block in try/finally for this reason.
+  const dir = makeSuite({ tasks: ALL });
+  useStub(dir, WORKING);
+  // A plain rmSync trips cli.mjs's own structural `existsSync(skillFile)` gate (added
+  // deliberately in Task 11 -- see the comment above `structural` in src/cli.mjs) and
+  // returns exit code 2 before the batch runs at all, which defeats the point of this
+  // test. A directory passes `existsSync` (so the batch runs and gets paid for) but
+  // fails `readFileSync(skillFile, "utf8")` in the post-run leakage scan with EISDIR,
+  // root-safe -- the same trick test/cli.test.mjs already uses for this exact scenario.
+  rmSync(join(dir, "SKILL.md"));
+  mkdirSync(join(dir, "SKILL.md"));
+  await main([dir, "--yes"], capture()).catch(() => {});
+  assert.equal(existsSync(join(dir, "LEDGER.md")), true,
+    "a batch that was paid for must never disappear from the ledger");
+});
+
+// RULING B: nothing in the repository asserts exit code 2 (RegistrationError). The CLI's
+// contract is 0 for CONFIRMATORY/EXPLORATORY, 1 for VOID, 2 for a RegistrationError --
+// distinguishing "your registration is broken" from "your result was void". Without this
+// test the two codes could be swapped and nothing would notice. Cause here is genuinely
+// structural: an unknown --task id, which main() rejects before any run happens.
+test("STRUCTURAL: an unknown --task id is a RegistrationError, exit code 2, never 1", async () => {
+  const dir = makeSuite({ tasks: ALL });
+  useStub(dir, WORKING);
+  const cap = capture();
+  const code = await main([dir, "--yes", "--task", "does-not-exist"], cap);
+  assert.equal(code, 2, "a structurally invalid registration/request must exit 2");
+  assert.notEqual(code, 1, "a RegistrationError must not collapse into the VOID exit code");
+  assert.equal(existsSync(join(dir, "LEDGER.md")), false,
+    "nothing ran, so nothing should be logged");
+});
