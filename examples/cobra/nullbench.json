@@ -1,0 +1,42 @@
+{
+  "model": "sonnet",
+  "judge_model": "sonnet",
+  "reps": 10,
+  "tasks": [
+    {
+      "id": "ic-agent-under-pressure",
+      "file": "tasks/ic-agent-under-pressure.json",
+      "sha256": "391c447a62b585f1de8401899cd57b1951ef7c85090ec19441f721d0bb94c7b0",
+      "kind": "signal",
+      "predict": "helps"
+    },
+    {
+      "id": "ic-clock-exclusion",
+      "file": "tasks/ic-clock-exclusion.json",
+      "sha256": "765a84c46939be075c613d10ce7b9d22c09fa1c4bd5c1abff7358e3632c934a6",
+      "kind": "signal",
+      "predict": "helps"
+    },
+    {
+      "id": "ic-noop-routine",
+      "file": "tasks/ic-noop-routine.json",
+      "sha256": "bbaec8115f8ac414f954c4ad95e7005a3bdf8a6159df1693182f9ecc77f6d54b",
+      "kind": "harm",
+      "predict": "no-effect"
+    },
+    {
+      "id": "ic-smoke-denominator",
+      "file": "tasks/ic-smoke-denominator.json",
+      "sha256": "9462c53f314475c81ffc8f58281b64fb4ce10a2b4b8b164d0d58ef972b8a0b90",
+      "kind": "signal",
+      "predict": "helps"
+    },
+    {
+      "id": "ic-sound-measure",
+      "file": "tasks/ic-sound-measure.json",
+      "sha256": "26f69035d518833d039ad7945eda6973f6e10c348359f32589c07b6f7a112cbd",
+      "kind": "harm",
+      "predict": "no-effect"
+    }
+  ]
+}
