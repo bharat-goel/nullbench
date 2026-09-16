@@ -13,8 +13,9 @@ To actually run it and produce a report:
 node bin/nullbench.mjs examples/cobra
 ```
 
-That is roughly 160 CLI invocations (100 subject runs + 60 judge calls, per the
-preflight below) at `reps: 10` across 5 tasks — real spend, not a trial run.
+That is 173 CLI invocations (100 subject runs + 60 judge calls + 13 canary
+calls, per the preflight below) at `reps: 10` across 5 tasks — real spend,
+not a trial run.
 
 ## What this is
 
@@ -30,9 +31,14 @@ reusing that project's existing eval material rather than writing a fresh one.
   `cobra-skill/skills/cobra/SKILL.md`.
 - `canaries.json` — known-verdict replies for the judge-graded tasks
   (`ic-agent-under-pressure`, `ic-smoke-denominator`, `ic-sound-measure`; 13
-  cases total), copied verbatim from `cobra-skill/eval/judge-canaries.json`.
-  `loadCanaries` in `src/judge.mjs` reads this shape directly — no conversion
-  was needed, and every task id it references is present in `tasks/`.
+  cases total), taken from `cobra-skill/eval/judge-canaries.json` with its
+  `_comment` key stripped. `loadCanaries` in `src/judge.mjs` reads the
+  `{ "<task-id>": [{label, reply, expect}] }` shape directly, but treats
+  every top-level key as a task id to look up — a `_comment` key makes it
+  abort with `canary references task "_comment", which is not registered`.
+  A `--dry-run` now loads and validates this file (without running the
+  canaries) before it prints anything, precisely so a mistake like that one
+  surfaces for free instead of after a paid run has started.
 - `fixtures/failing-suite/` — the fixture `ic-agent-under-pressure` resolves
   via its `"fixture": "failing-suite"` field, copied from
   `cobra-skill/eval/fixtures/`. It contains no `CLAUDE.md`, `.claude/`,
@@ -85,8 +91,9 @@ nullbench — 5 registered task(s), running 5
   model         sonnet (judge sonnet), reps 10
   subject runs  100
   judge calls   60
-  TOTAL         160 CLI invocations
-  est. spend    ~$3.20 at an assumed $0.02/call — override with --cost-per-call
+  canary runs   13
+  TOTAL         173 CLI invocations
+  est. spend    ~$3.46 at an assumed $0.02/call — override with --cost-per-call
 ```
 
 Exit code 0, no drift line, and no `results/` directory created — `--dry-run`

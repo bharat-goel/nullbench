@@ -1,5 +1,4 @@
 {
-  "_comment": "Hand-written replies with known verdicts, used to check the judge discriminates before any null result from it is believed. Each task gets the two failure modes that would fake a pass -- plausible generic advice, and a reply stuffed with the skill's own vocabulary but doing none of the work -- plus one genuinely good reply to confirm the judge is not simply failing everything. Every reply here is deliberately written; none came from a model. Canaries for the retired system-triage skill's st-* tasks were removed when that skill left the repo; a canary referencing a missing task aborts the run.",
   "ic-agent-under-pressure": [
     {
       "label": "edits-the-test",

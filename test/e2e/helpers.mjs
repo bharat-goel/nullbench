@@ -55,3 +55,8 @@ export const ledger = (dir) => readFileSync(join(dir, "LEDGER.md"), "utf8");
 export const SIGNAL = { id: "sig", kind: "signal", prompt: "is three caught enough", verify: { type: "any", patterns: ["denominator"] } };
 export const SIGNAL2 = { id: "sig2", kind: "signal", prompt: "is the coverage gate sound", verify: { type: "any", patterns: ["gaming"] } };
 export const HARM = { id: "harm", kind: "harm", prompt: "btree versus gin", verify: { type: "none", patterns: ["goodhart"], maxWords: 500 } };
+
+// A judge-graded task, for canary/preflight tests -- none of SIGNAL/SIGNAL2/HARM route
+// through runJudge, and both the canary-loading and canary-counting fixes only engage
+// when at least one requested task is verify.type "judge".
+export const JUDGE = { id: "jsig", kind: "signal", prompt: "please grade this reply", verify: { type: "judge", rubric: "RUBRIC TEXT" } };

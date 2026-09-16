@@ -1,9 +1,9 @@
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, rmSync, mkdirSync } from "node:fs";
+import { existsSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { main } from "../../src/cli.mjs";
-import { makeSuite, useStub, clearStub, capture, ledger, SIGNAL, SIGNAL2, HARM } from "./helpers.mjs";
+import { makeSuite, useStub, clearStub, capture, ledger, SIGNAL, SIGNAL2, HARM, JUDGE } from "./helpers.mjs";
 
 afterEach(clearStub);
 
@@ -143,4 +143,62 @@ test("STRUCTURAL: an unknown --task id is a RegistrationError, exit code 2, neve
   assert.notEqual(code, 1, "a RegistrationError must not collapse into the VOID exit code");
   assert.equal(existsSync(join(dir, "LEDGER.md")), false,
     "nothing ran, so nothing should be logged");
+});
+
+// Task 15 fix round 1, Finding 1 + 2: canaries.json must be loaded and validated
+// during the free preflight, not only once the batch has been paid for. A cobra-style
+// canaries.json still carrying its "_comment" key is exactly the shape that slipped
+// through before this test existed -- loadCanaries treats every top-level key as a
+// task id, so "_comment" reads as a reference to an unregistered task.
+test("PREFLIGHT: a canaries.json referencing an unregistered task id fails a dry run with exit 2 and names the id", async () => {
+  const dir = makeSuite({ tasks: [JUDGE, HARM] });
+  writeFileSync(join(dir, "canaries.json"), JSON.stringify({
+    _comment: "not a task",
+    jsig: [{ label: "ok", expect: "PASS", reply: "a fine reply" }],
+  }));
+  const cap = capture();
+  const code = await main([dir, "--dry-run"], cap);
+  assert.equal(code, 2, "a broken canaries.json is structural, not a run outcome");
+  assert.match(cap.text(), /"_comment"/, "the offending id must be named");
+  assert.equal(existsSync(join(dir, "results")), false, "a dry run must still spend nothing");
+});
+
+// Finding 2's regression guard: fixing the above must not turn "no canaries.json at
+// all" into an error. That is the documented, intentional un-gated state -- a warning,
+// not a RegistrationError -- both during a free dry run and once a real run proceeds.
+test("PREFLIGHT: a judged suite with no canaries.json at all still dry-runs clean and still warns for real", async () => {
+  const dir = makeSuite({ tasks: [JUDGE, HARM] });
+  useStub(dir, {
+    rules: [{ promptIncludes: "RUBRIC TEXT", arm: "any", outs: ["VERDICT: PASS\nREASON: fine"] }],
+    default: { outs: ["a plain reply"] },
+  });
+
+  const dryCap = capture();
+  const dryCode = await main([dir, "--dry-run"], dryCap);
+  assert.equal(dryCode, 0, "a missing canaries.json must not become a dry-run error");
+  assert.doesNotMatch(dryCap.text(), /RegistrationError|canary references/i);
+
+  const runCap = capture();
+  const code = await main([dir, "--yes"], runCap);
+  assert.notEqual(code, 2, "a missing canaries.json must not become a structural error for a real run either");
+  assert.match(runCap.text(), /This suite has judge-graded tasks but no canaries\.json/);
+});
+
+// Finding 3: the cost preflight must count canary calls, and show them on their own
+// line, not fold them silently into TOTAL or omit them.
+test("PREFLIGHT: canary calls are counted and shown on their own line, and included in TOTAL", async () => {
+  const dir = makeSuite({ tasks: [JUDGE, HARM] }); // reps defaults to 4 in makeSuite
+  writeFileSync(join(dir, "canaries.json"), JSON.stringify({
+    jsig: [
+      { label: "a", expect: "PASS", reply: "x" },
+      { label: "b", expect: "FAIL", reply: "y" },
+    ],
+  }));
+  const cap = capture();
+  const code = await main([dir, "--dry-run"], cap);
+  assert.equal(code, 0);
+  // subjectRuns = 2 tasks x 2 arms x 4 reps = 16; judgeRuns = 1 judged task x 2 x 4 = 8;
+  // canaryRuns = 2 -> total 26.
+  assert.match(cap.text(), /canary runs {3}2\b/);
+  assert.match(cap.text(), /TOTAL {9}26 CLI invocations/);
 });

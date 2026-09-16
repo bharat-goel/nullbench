@@ -44,7 +44,22 @@ test("the preflight counts subject runs and judge calls separately", () => {
   const p = plan(registration, requested);
   assert.equal(p.subjectRuns, 40);  // 2 tasks x 2 arms x 10 reps
   assert.equal(p.judgeRuns, 20);    // only the judged task, both arms
+  assert.equal(p.canaryRuns, 0);    // no canary count given -- existing callers unaffected
   assert.equal(p.total, 60);
+});
+
+// Task 15 fix round 1, Finding 3: runCanaries makes one runJudge call per canary, and
+// the preflight was silently omitting that from TOTAL -- a cost preflight that
+// undercounts is worse than one that is merely approximate. canaryCount is an
+// optional third argument specifically so existing callers (and the test above) are
+// unaffected when it is omitted.
+test("plan() includes canary calls in the total when a canary count is given", () => {
+  const requested = { reps: 10, model: "sonnet", judgeModel: "sonnet", taskIds: ["sig", "harm"] };
+  const p = plan(registration, requested, 13);
+  assert.equal(p.subjectRuns, 40);
+  assert.equal(p.judgeRuns, 20);
+  assert.equal(p.canaryRuns, 13);
+  assert.equal(p.total, 73);
 });
 
 // findRepoRoot backs Ruling 1 (isolate against the repository, not the suite

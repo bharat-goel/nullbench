@@ -57,12 +57,12 @@ export function parseArgs(argv) {
   return out;
 }
 
-export function plan(registration, requested) {
+export function plan(registration, requested, canaryCount = 0) {
   const byId = new Map(registration.tasks.map((t) => [t.id, t]));
   const chosen = requested.taskIds.map((id) => byId.get(id));
   const subjectRuns = chosen.length * 2 * requested.reps;
   const judgeRuns = chosen.filter((t) => t.spec.verify.type === "judge").length * 2 * requested.reps;
-  return { subjectRuns, judgeRuns, total: subjectRuns + judgeRuns };
+  return { subjectRuns, judgeRuns, canaryRuns: canaryCount, total: subjectRuns + judgeRuns + canaryCount };
 }
 
 function confirm(stdin, stdout, question) {
@@ -105,13 +105,34 @@ export async function main(argv, { stdout = process.stdout, stdin = process.stdi
   ];
   if (structural.length) { stdout.write(new RegistrationError(structural).message + "\n"); return 2; }
 
-  const p = plan(registration, requested);
+  // Canaries are loaded (and validated) here, before the dry-run return, not just
+  // before they are run. A broken canaries.json -- one that still carries cobra's
+  // "_comment" key, say -- would otherwise pass a free dry run and only abort once the
+  // batch has been paid for. Loading is not the same as running: runCanaries is still
+  // called later, only after --yes/confirm, exactly where it always was. A suite with
+  // no canaries.json at all is not an error here -- that's the explicit un-gated state,
+  // reported as a warning once the run actually starts, not a structural failure.
+  const hasJudged = requested.taskIds.some(
+    (id) => registration.tasks.find((t) => t.id === id).spec.verify.type === "judge");
+  const cPath = join(dir, "canaries.json");
+  let loadedCanaries = null;
+  if (hasJudged && existsSync(cPath)) {
+    try {
+      loadedCanaries = loadCanaries(cPath, registration);
+    } catch (e) {
+      if (e instanceof RegistrationError) { stdout.write(`${e.message}\n`); return 2; }
+      throw e;
+    }
+  }
+
+  const p = plan(registration, requested, loadedCanaries ? loadedCanaries.length : 0);
   stdout.write(
     `nullbench — ${registration.tasks.length} registered task(s), running ${requested.taskIds.length}\n` +
     `  registration  ${registration.hash.slice(0, 16)}\n` +
     `  model         ${requested.model} (judge ${requested.judgeModel}), reps ${requested.reps}\n` +
     `  subject runs  ${p.subjectRuns}\n` +
     `  judge calls   ${p.judgeRuns}\n` +
+    `  canary runs   ${p.canaryRuns}\n` +
     `  TOTAL         ${p.total} CLI invocations\n` +
     `  est. spend    ~$${(p.total * args.costPerCall).toFixed(2)} at an assumed ` +
     `$${args.costPerCall.toFixed(2)}/call — override with --cost-per-call\n`
@@ -130,12 +151,9 @@ export async function main(argv, { stdout = process.stdout, stdin = process.stdi
   const outDir = join(dir, "results", stamp.replace(/[:.]/g, "-"));
   mkdirSync(outDir, { recursive: true });
 
-  const hasJudged = requested.taskIds.some(
-    (id) => registration.tasks.find((t) => t.id === id).spec.verify.type === "judge");
   let canary = null;
   if (hasJudged) {
-    const cPath = join(dir, "canaries.json");
-    if (!existsSync(cPath)) {
+    if (!loadedCanaries) {
       stdout.write(`\nThis suite has judge-graded tasks but no canaries.json.\n` +
         `An ungated judge is an unverified safeguard; judged results cannot be confirmed.\n`);
       canary = { ok: false, misgrades: [{ id: "missing", why: "no canaries.json" }], total: 0 };
@@ -144,7 +162,7 @@ export async function main(argv, { stdout = process.stdout, stdin = process.stdi
       const iso = assertIsolated(canarySandbox, repoRoot);
       if (!iso.ok) throw new Error(`canary sandbox is not isolated:\n  - ${iso.problems.join("\n  - ")}`);
       canary = await runCanaries({
-        canaries: loadCanaries(cPath, registration), model: requested.judgeModel, cwd: canarySandbox });
+        canaries: loadedCanaries, model: requested.judgeModel, cwd: canarySandbox });
       rmSync(canarySandbox, { recursive: true, force: true });
       stdout.write(`judge canaries: ${canary.total - canary.misgrades.length}/${canary.total} correct\n`);
     }
