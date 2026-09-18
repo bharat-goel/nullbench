@@ -140,6 +140,24 @@ export async function main(argv, { stdout = process.stdout, stdin = process.stdi
     registration.drift.push(...patternDrift(registration.tasks, readFileSync(skillFile, "utf8")));
   } catch { /* unreadable SKILL.md: reported by the post-run scan, as before */ }
 
+  // Declared fixtures are checked here, at preflight, not when the worker first reaches
+  // a task that needs one. makeCwd throws on a missing fixture and that throw aborts the
+  // whole batch -- after the canaries have been paid for and, depending on scheduling,
+  // after subject runs have too. A missing directory is knowable for free before any of
+  // that. This cost a real run to find: the worked example aborted 13 canary calls in.
+  const missingFixtures = [];
+  for (const id of requested.taskIds) {
+    const t = registration.tasks.find((x) => x.id === id);
+    const fx = t?.spec?.fixture;
+    if (fx && !existsSync(join(dir, fx))) {
+      missingFixtures.push(`task "${id}" declares fixture "${fx}", but ${join(dir, fx)} does not exist`);
+    }
+  }
+  if (missingFixtures.length) {
+    stdout.write(new RegistrationError(missingFixtures).message + "\n");
+    return 2;
+  }
+
   // Canaries are loaded (and validated) here, before the dry-run return, not just
   // before they are run. A broken canaries.json -- one that still carries cobra's
   // "_comment" key, say -- would otherwise pass a free dry run and only abort once the

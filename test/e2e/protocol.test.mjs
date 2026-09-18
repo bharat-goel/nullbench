@@ -289,3 +289,22 @@ test("SKILL OVERRIDE: --skill swaps the thing under test and cannot be confirmat
   assert.match(cap.text(), /EXPLORATORY/, "running a skill other than the registered one cannot be confirmed");
   assert.match(cap.text(), /skill differs/, "the report must say which skill actually ran");
 });
+
+test("PREFLIGHT: a task declaring a fixture that does not exist fails the dry run, before any spend", async () => {
+  // makeCwd throws on a missing fixture and that throw aborts the whole batch -- after
+  // the canaries have been paid for. The worked example hit exactly this: 13 canary
+  // calls spent, then an abort on a directory whose absence was knowable for free.
+  const FIXTURE_TASK = {
+    id: "fx", kind: "signal", predict: "helps", prompt: "a task needing a project",
+    fixture: "no-such-fixture", verify: { type: "any", patterns: ["x"] },
+  };
+  const dir = makeSuite({ tasks: [FIXTURE_TASK, HARM] });
+  useStub(dir, { default: { outs: ["a plain reply"] } });
+
+  const cap = capture();
+  const code = await main([dir, "--dry-run"], cap);
+  assert.equal(code, 2, "a missing fixture is structural, not drift");
+  assert.notEqual(code, 1, "must not be confused with VOID");
+  assert.match(cap.text(), /no-such-fixture/, "the missing fixture must be named");
+  assert.match(cap.text(), /"fx"/, "the task needing it must be named");
+});
