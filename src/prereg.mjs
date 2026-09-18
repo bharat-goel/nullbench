@@ -55,6 +55,13 @@ export function loadRegistration(dir, skillFile = null) {
   const seen = new Set();
   for (const [i, t] of raw.tasks.entries()) {
     const at = `tasks[${i}]`;
+    // Without this, a null or non-object entry threw a raw TypeError out of
+    // loadRegistration, which bin/nullbench.mjs caught as exit 1 -- VOID's code. A
+    // malformed registration and a voided result must never share an exit status.
+    if (t === null || typeof t !== "object" || Array.isArray(t)) {
+      problems.push(`${at} must be an object`);
+      continue;
+    }
     if (typeof t.id !== "string" || !t.id) { problems.push(`${at}.id must be a non-empty string`); continue; }
     if (seen.has(t.id)) problems.push(`${at}.id "${t.id}" is duplicated`);
     seen.add(t.id);

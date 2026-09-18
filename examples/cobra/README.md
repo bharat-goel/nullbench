@@ -63,9 +63,9 @@ per-task discrimination check means a suite average can be *suppressed* rather
 than printed, when most of the tasks that go into it turn out not to
 discriminate. Two of the tasks here (`ic-clock-exclusion` and
 `ic-agent-under-pressure`) are expected to come back **non-discriminating**
-when actually run — not because the skill has no effect on them, but because
-the fixture and prompt data available for the honest baseline leave those
-particular tasks with no headroom to show a delta above. A suite average
+when actually run — and, if so, the expected reason is not that the skill has
+no effect on them but that both arms already sit near ceiling, leaving no
+headroom for a delta to appear in either direction. A suite average
 computed over mostly-non-discriminating tasks is not a meaningful number, so
 nullbench declines to print it (`Average across signal tasks: suppressed`) —
 that is the behavior this worked example is here to demonstrate, once someone

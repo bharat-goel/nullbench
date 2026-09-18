@@ -156,3 +156,17 @@ test("a reporting-stage crash still appends to the ledger and exits non-zero, no
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// A value-taking flag in final position used to read `undefined` and fall back to the
+// registered value silently, and --cost-per-call took Number() with no guard.
+test("a value-taking flag with no operand is rejected, not silently ignored", () => {
+  for (const flag of ["--model", "--judge-model", "--task", "--skill", "--reps", "--cost-per-call"]) {
+    assert.throws(() => parseArgs([".", flag]), /requires a value/, `${flag} must reject a missing operand`);
+  }
+});
+
+test("--cost-per-call rejects a non-number instead of printing $NaN", () => {
+  assert.throws(() => parseArgs([".", "--cost-per-call", "abc"]), /must be a non-negative number/);
+  assert.throws(() => parseArgs([".", "--cost-per-call", "-1"]), /must be a non-negative number/);
+  assert.equal(parseArgs([".", "--cost-per-call", "0.015"]).costPerCall, 0.015);
+});

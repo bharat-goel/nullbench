@@ -1,7 +1,6 @@
 // Flag parsing, cost preflight, orchestration, exit codes.
 
-import { mkdirSync, writeFileSync, existsSync, readFileSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 import { loadRegistration, patternDrift, RegistrationError } from "./prereg.mjs";
 import { runSuite, gradedCounts } from "./runner.mjs";
@@ -9,10 +8,27 @@ import { runCanaries, loadCanaries } from "./judge.mjs";
 import { classify } from "./classify.mjs";
 import { aggregate, renderReport } from "./report.mjs";
 import { appendEntry } from "./ledger.mjs";
-import { assertIsolated, distinctiveTerms, scanControlLeakage } from "./leakage.mjs";
+import { distinctiveTerms, scanControlLeakage } from "./leakage.mjs";
+
+// A value-taking flag in final position reads `undefined` and used to fall back to the
+// registered value in silence -- `nullbench . --model` ran the registered model and said
+// nothing. Every flag below routes its operand through here first.
+function operand(raw, flag) {
+  if (raw === undefined) throw new RegistrationError([`${flag} requires a value`]);
+  return raw;
+}
+
+// The float sibling of intArg. --cost-per-call abc printed "est. spend ~$NaN at an
+// assumed $NaN/call"; intArg existed precisely because a NaN reached the preflight once
+// before, and this flag never got the same treatment.
+function floatArg(raw, flag) {
+  const v = Number(operand(raw, flag));
+  if (!Number.isFinite(v) || v < 0) throw new RegistrationError([`${flag} must be a non-negative number, got "${raw}"`]);
+  return v;
+}
 
 function intArg(raw, flag) {
-  const v = Number(raw);
+  const v = Number(operand(raw, flag));
   // Number("abc") is NaN, and `args.reps ?? registration.reps` does not catch NaN --
   // it flowed through to a "TOTAL NaN invocations" preflight and a RangeError later.
   if (!Number.isInteger(v) || v < 1) throw new RegistrationError([`${flag} must be a positive integer, got "${raw}"`]);
@@ -44,11 +60,11 @@ export function parseArgs(argv) {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--reps") out.reps = intArg(argv[++i], "--reps");
-    else if (a === "--model") out.model = argv[++i];
-    else if (a === "--judge-model") out.judgeModel = argv[++i];
-    else if (a === "--task") out.taskIds.push(argv[++i]);
-    else if (a === "--skill") out.skill = argv[++i];
-    else if (a === "--cost-per-call") out.costPerCall = Number(argv[++i]);
+    else if (a === "--model") out.model = operand(argv[++i], "--model");
+    else if (a === "--judge-model") out.judgeModel = operand(argv[++i], "--judge-model");
+    else if (a === "--task") out.taskIds.push(operand(argv[++i], "--task"));
+    else if (a === "--skill") out.skill = operand(argv[++i], "--skill");
+    else if (a === "--cost-per-call") out.costPerCall = floatArg(argv[++i], "--cost-per-call");
     else if (a === "--yes") out.yes = true;
     else if (a === "--dry-run") out.dryRun = true;
     else rest.push(a);
@@ -177,12 +193,9 @@ export async function main(argv, { stdout = process.stdout, stdin = process.stdi
         `An ungated judge is an unverified safeguard; judged results cannot be confirmed.\n`);
       canary = { ok: false, misgrades: [{ id: "missing", why: "no canaries.json" }], total: 0 };
     } else {
-      const canarySandbox = mkdtempSync(join(tmpdir(), "nullbench-canary-"));
-      const iso = assertIsolated(canarySandbox, repoRoot);
-      if (!iso.ok) throw new Error(`canary sandbox is not isolated:\n  - ${iso.problems.join("\n  - ")}`);
+      // runCanaries mkdtemps, isolation-checks and removes one sandbox per canary call.
       canary = await runCanaries({
-        canaries: loadedCanaries, model: requested.judgeModel, cwd: canarySandbox });
-      rmSync(canarySandbox, { recursive: true, force: true });
+        canaries: loadedCanaries, model: requested.judgeModel, repoRoot });
       stdout.write(`judge canaries: ${canary.total - canary.misgrades.length}/${canary.total} correct\n`);
     }
   }

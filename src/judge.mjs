@@ -9,9 +9,12 @@
 // the right thing, which inflates every number in the report. FAILURES.md entry 1 is
 // what that looks like when it happens: +70.0pp of pure diction.
 
-import { readFileSync } from "node:fs";
+import { readFileSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { invoke } from "./claude.mjs";
 import { RegistrationError } from "./prereg.mjs";
+import { assertIsolated } from "./leakage.mjs";
 
 export function judgePrompt(task, reply) {
   return [
@@ -86,11 +89,36 @@ export function loadCanaries(path, registration) {
   return out;
 }
 
-export async function runCanaries({ canaries, model, cwd }) {
+// One sandbox per canary call, not one for the whole set -- the same lifecycle the runner
+// gives every measured invocation, and for the same reason: a single directory reused
+// across calls is checked once and can be dirtied afterwards by anything that runs in it.
+// The blast radius here is smaller (canaries grade fixed replies before the batch and
+// cannot touch a measured run), but a sandbox whose isolation is asserted at t=0 and then
+// shared is precisely the shape of the bug this project found in its own runner.
+//
+// `cwd` is still accepted, and when given is used as-is for every call: the tests pass a
+// directory they control, and a caller who wants one sandbox can still have one. The CLI
+// passes `repoRoot` instead and gets the per-call lifecycle.
+export async function runCanaries({ canaries, model, cwd = null, repoRoot = null }) {
   const misgrades = [];
   for (const c of canaries) {
     const task = { prompt: c.prompt, verify: { rubric: c.rubric } };
-    const got = await runJudge({ task, reply: c.reply, model, cwd });
+    let dir = cwd, temporary = false;
+    if (!dir) {
+      dir = mkdtempSync(join(tmpdir(), "nullbench-canary-"));
+      temporary = true;
+      const iso = assertIsolated(dir, repoRoot ?? dir);
+      if (!iso.ok) {
+        rmSync(dir, { recursive: true, force: true });
+        throw new Error(`canary sandbox is not isolated:\n  - ${iso.problems.join("\n  - ")}`);
+      }
+    }
+    let got;
+    try {
+      got = await runJudge({ task, reply: c.reply, model, cwd: dir });
+    } finally {
+      if (temporary) rmSync(dir, { recursive: true, force: true });
+    }
     const expected = c.expect.toUpperCase() === "PASS";
     if (got.pass !== expected) misgrades.push({ id: c.id, expected: c.expect, got: got.pass ? "PASS" : "FAIL", why: got.why });
   }

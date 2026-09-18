@@ -157,3 +157,22 @@ test("the registration hash covers SKILL.md, not just the task files", () => {
 
   rmSync(dir, { recursive: true, force: true });
 });
+
+test("a malformed task entry is a RegistrationError, not a TypeError escaping as exit 1", () => {
+  const dir = mkdtempSync(join(tmpdir(), "nb-badtask-"));
+  writeFileSync(join(dir, "SKILL.md"), "# s\n");
+  for (const bad of [null, "a string", 42, ["an", "array"]]) {
+    writeFileSync(join(dir, "nullbench.json"), JSON.stringify({
+      model: "sonnet", judge_model: "sonnet", reps: 4, tasks: [bad],
+    }));
+    assert.throws(
+      () => loadRegistration(dir),
+      (e) => {
+        assert.ok(e instanceof RegistrationError, `${JSON.stringify(bad)} threw ${e.constructor.name}, not RegistrationError`);
+        assert.match(e.message, /tasks\[0\] must be an object/);
+        return true;
+      },
+    );
+  }
+  rmSync(dir, { recursive: true, force: true });
+});
