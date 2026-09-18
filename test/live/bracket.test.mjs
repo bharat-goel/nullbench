@@ -23,6 +23,13 @@ import { aggregate } from "../../src/report.mjs";
 import { discriminates } from "../../src/stats.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
+// 30 minutes was enough against a hosted model. A local model on one GPU serializes
+// every call -- measured at roughly 2m15s per reply for gemma-4-12b-qat -- so a
+// 40-invocation fixture needs about 90 minutes and the old ceiling aborted it mid-run.
+// An aborted run is not a failed bracket; it is no measurement at all, and it would be
+// reported as the former. Override with NULLBENCH_LIVE_TIMEOUT_MS.
+const TEST_TIMEOUT = Number(process.env.NULLBENCH_LIVE_TIMEOUT_MS || 14_400_000);
+
 const capture = () => { let b = ""; return { stdout: { write: (s) => (b += s, true) }, text: () => b }; };
 
 function latestRecords(dir) {
@@ -31,7 +38,7 @@ function latestRecords(dir) {
   return JSON.parse(readFileSync(join(results, newest, "records.json"), "utf8"));
 }
 
-test("PLACEBO: an irrelevant skill must produce a null", { timeout: 1_800_000 }, async () => {
+test("PLACEBO: an irrelevant skill must produce a null", { timeout: TEST_TIMEOUT }, async () => {
   const dir = join(HERE, "fixtures", "placebo");
   await main([dir, "--yes"], capture());
   const { records } = latestRecords(dir);
@@ -47,7 +54,7 @@ test("PLACEBO: an irrelevant skill must produce a null", { timeout: 1_800_000 },
   }
 });
 
-test("KNOWN POSITIVE: a trivially detectable effect must be detected", { timeout: 1_800_000 }, async () => {
+test("KNOWN POSITIVE: a trivially detectable effect must be detected", { timeout: TEST_TIMEOUT }, async () => {
   const dir = join(HERE, "fixtures", "positive");
   await main([dir, "--yes"], capture());
   const { records } = latestRecords(dir);
