@@ -1,8 +1,21 @@
 # The live bracket
 
-**This bracket has never been run. Nothing in this directory reflects an observed
-result.** It was written under a scope reduction: the environment building it had no
-API access, so the code exists but has not executed once, not even a single rep.
+**Status: placebo arm run and passed; known-positive arm not completed.** Both must
+pass before the bracket means anything.
+
+| Arm | Status | Result |
+|---|---|---|
+| `fixtures/placebo/` | run 2026-09-18 on local `gemma-4-12b-qat` | CONFIRMATORY, `+0.0pp [-27.8pp, +27.8pp]` over 40 graded runs — spans zero, as required |
+| `fixtures/positive/` | **not completed** | VOID — LM Studio dropped connections at the default concurrency of 4 |
+
+Neither arm has run against a hosted model. The known-positive failure was
+environmental, not a failed detection: one reply did arrive and was a correct
+three-bullet answer, so the fixture and the skill are sound. Re-run it with
+`--concurrency 1` (see below).
+
+A harness that always reports null passes the placebo arm perfectly. That is precisely
+why the placebo result alone proves nothing, and why this file does not describe the
+bracket as passing.
 
 ## What this is
 

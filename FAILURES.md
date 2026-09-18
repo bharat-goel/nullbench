@@ -7,9 +7,11 @@ honestly, with the verifier code in front of them.
 **Where the numbers come from.** Every figure in this document was measured by the
 `cobra` skill's own evaluation harness (`cobra-skill/eval/`, results in
 `eval/RESULTS.md`), not by nullbench. They are cited here as the evidence that these
-failure modes are real and not hypothetical. nullbench has not reproduced them and does
-not claim to: its worked example in `examples/cobra/` re-registers that suite but has
-never been run. Nothing below is a nullbench measurement.
+failure modes are real and not hypothetical. With one exception, nullbench has not
+reproduced them and does not claim to — the figures below are cobra's harness, not this
+one. The exception is entry 2's `ic-smoke-denominator` cell, which nullbench's own run
+(`examples/cobra/`, Sonnet, 2026-09-18) measured independently and which is marked as
+such where it appears.
 
 They are also, with one exception, **bare point estimates published without intervals** —
 because that is how they were published, and that is part of what this document is about
@@ -77,7 +79,14 @@ direction I expected" is not evidence the verifier works.
 > which is +80.0pp. Its prose at line 55 says "+90.0pp against +50.0pp". +80.0pp is the
 > correct figure and the prose is the error; it propagated into this project's design
 > document before being caught here. The defect in cobra's published document has not
-> been fixed from this repository.
+> been fixed from this repository; it is raised in
+> [cobra-skill#4](https://github.com/bharat-goel/cobra-skill/pull/4).
+>
+> **Independently reproduced.** nullbench's own run of this suite (Sonnet, 2026-09-18,
+> `examples/cobra/`) measured the same cell at **10% → 90%, +80.0pp [+37.0pp, +91.6pp]**
+> — a separate harness, a separate registration, the same result. That corroborates the
+> corrected figure and not the published prose. It is one re-measurement, not a pooled
+> estimate, and the interval is wide.
 
 **What nullbench does.** **mitigated** — same mechanisms as entry 1, and the same
 residual. `src/verify.mjs` keeps

@@ -11,19 +11,28 @@ Version: nullbench 0.1.0. Node >= 22, zero dependencies.
 
 ## Placebo status
 
-**UNVERIFIED — the live bracket has never been executed.**
+**PARTIAL — the placebo arm has run on a local model; the known-positive arm has not
+completed. Both must pass before the bracket means anything.**
 
 ```
-Last verified:            never
-Placebo interval:         not observed
-Known-positive interval:  not observed
+Last verified:            2026-09-18 (placebo only)
+Model:                    google/gemma-4-12b-qat, local, via tools/local-claude.mjs
+Placebo interval:         +0.0pp [-27.8pp, +27.8pp] over 40 graded runs — spans zero,
+                          as required
+Known-positive interval:  NOT OBSERVED — batch came back VOID
 ```
 
-The bracket exists as code and fixtures under `test/live/`, run by `npm run
-verify:live`, and it has been checked offline by `--dry-run` only. Not one rep of it has
-been executed against a real model, by anyone, at any time. No placebo interval and no
-known-positive interval has ever been observed, here or elsewhere, and none is quoted,
-estimated, or implied anywhere in this repository.
+The placebo arm ran clean and CONFIRMATORY: an irrelevant skill (ISO-8601 date formatting)
+measured against reasoning tasks produced an interval spanning zero, on both its signal and
+its harm task. On that model, the runner does not manufacture effects.
+
+The known-positive arm did not complete. LM Studio dropped connections under the runner's
+default concurrency of 4 — `fetch failed` on 39 of 40 calls — and the batch was reported
+VOID rather than as a failed detection. Re-run it with `--concurrency 1`; see
+`test/live/README.md`. One reply did arrive and was a correct three-bullet answer, so the
+fixture and the skill are sound; what is missing is the measurement, not the mechanism.
+
+Neither arm has ever run against a hosted model.
 
 **What that means for every other number nullbench prints.** The bracket is the guarantee
 that the runner does not manufacture effects. Its placebo arm is a well-written skill
@@ -31,9 +40,12 @@ irrelevant to the tasks it is measured against; the runner must report an interv
 spans zero. Its known-positive arm is a skill that mechanically changes output shape
 ("answer in exactly three bullets"), deterministically verified; the runner must report an
 interval strictly above zero. One without the other proves nothing — a harness that always
-reports null passes the placebo test perfectly. Until both have run and both have passed,
-**the claim that this runner can tell a real effect from noise is unproven**, and every
-report it produces should be read with that in mind. The protocol logic is tested end to
+reports null passes the placebo test perfectly, which is exactly what the placebo arm alone
+now demonstrates and exactly why it is not enough. Until the known-positive arm has also
+run and passed, **the claim that this runner can tell a real effect from noise rests on the
+cobra worked example** — which did detect a large effect (`+80.0pp [+37.0pp, +91.6pp]`) with
+a matched control, and is real evidence, but is not a purpose-built positive control with a
+mechanically guaranteed answer. The protocol logic is tested end to
 end against a stub (118 offline tests, no network, no API key); the stub is not a model.
 
 **What it costs.** 80 CLI invocations — 40 per fixture, being 2 tasks x 2 arms x 10 reps,

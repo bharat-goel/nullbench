@@ -22,32 +22,36 @@ one thing here, read that.** It is useful whether or not you ever install this.
 
 ---
 
-## Status: unvalidated against a real model
+## Status: run, with one half of the bracket still unverified
 
 Read this before you read anything else as a claim.
 
-- The protocol logic is tested end to end: **118 offline tests**, no network, no API key,
+- The protocol logic is tested end to end: **138 offline tests**, no network, no API key,
   driven by a stub `claude` binary that replays recorded output.
-- **The runner has never been executed against a real model.** Not once, not one rep. The
-  person who built it has no API access.
-- The live bracket — a placebo skill that must produce nothing and a known-positive skill
-  that must be detected — exists under `test/live/` and **has never been run**. Until it
-  has, the guarantee that this runner does not manufacture effects is **unproven**. See
-  the Placebo status block at the top of `PROTOCOL.md`.
-- The worked example in `examples/cobra/` **has never been run** either. It is a real
-  registration over cobra's real tasks, verified offline: hashes check out, the fixture is
-  isolation-clean, `--dry-run` prints a real preflight of 173 invocations. It has produced
-  no results, and none are quoted anywhere in this repository.
+- **The worked example has been run**, on Sonnet, 2026-09-18: 173 invocations, judge
+  canaries 13/13, report CONFIRMATORY. The table is in `examples/cobra/README.md` and the
+  run is in `examples/cobra/LEDGER.md` alongside the three attempts that failed first.
+- **The placebo half of the live bracket has been run** — on a local `gemma-4-12b-qat`,
+  not on a hosted model. An irrelevant skill produced `+0.0pp [-27.8pp, +27.8pp]`,
+  non-discriminating, over 40 graded runs. The runner does not manufacture effects on that
+  model.
+- **The known-positive half has not completed.** LM Studio dropped connections under the
+  runner's default concurrency and the batch came back VOID. So the other direction — that
+  this runner can *detect* an effect that is really there — rests on the cobra run's
+  `+80.0pp` and not on a purpose-built positive control. See the Placebo status block in
+  `PROTOCOL.md`.
 
-What the worked example is *set up to do*, when somebody with API access runs it: register
-five cobra tasks — three signal, two harm — with a prediction committed for each, run them
-paired, and apply the discrimination rule. Two of the signal tasks are expected to come
-back non-discriminating, which would leave one discriminating signal task, which is below
-the threshold of two, which means the suite average would be **suppressed** rather than
-printed. That is the outcome the example was built to demonstrate: the protocol's first
-act being to withhold its own author's headline figure. **It is a prediction, stated in
-advance so it can be wrong.** It is not a result, and this README will not report it as one
-until the run happens.
+The prediction this README carried before the run, stated so it could be wrong: two of the
+three signal tasks would come back non-discriminating, leaving one, which is below the
+threshold of two, which would make the suite average **suppressed** rather than printed.
+
+That is what happened. `ic-smoke-denominator` came back `+80.0pp [+37.0pp, +91.6pp]`; the
+other two signal tasks sat at ceiling in both arms and were flagged non-discriminating; the
+average was withheld. The protocol's first act was to decline to print its own author's
+headline figure.
+
+Two of the three `helps` predictions were scored **MISS**, because they were committed
+before the run and were wrong. That is the point of committing them.
 
 A project whose thesis is that published evaluations overclaim does not get to overclaim.
 

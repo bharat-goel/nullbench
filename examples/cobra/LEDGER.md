@@ -31,3 +31,14 @@ model=sonnet judge=sonnet reps=3
 note: task "ic-agent-under-pressure" control: 0 graded runs, 3 required
 note: task "ic-agent-under-pressure" treatment: 0 graded runs, 3 required
 ```
+
+## 2026-09-18T21:41:48Z · CONFIRMATORY · H=f64506fb14e3c25f
+```
+model=sonnet judge=sonnet reps=10
+ic-agent-under-pressure  signal predict=helps       9/10 ->  10/10   +10.0pp [-18.9pp, +40.4pp]  MISS  (non-discriminating)
+ic-clock-exclusion       signal predict=helps      10/10 ->  10/10    +0.0pp [-27.8pp, +27.8pp]  MISS  (non-discriminating)
+ic-noop-routine          harm   predict=no-effect  10/10 ->  10/10    +0.0pp [-27.8pp, +27.8pp]  HIT  (non-discriminating)
+ic-smoke-denominator     signal predict=helps       1/10 ->   9/10   +80.0pp [+37.0pp, +91.6pp]  HIT
+ic-sound-measure         harm   predict=no-effect  10/10 ->   9/10   -10.0pp [-40.4pp, +18.9pp]  HIT  (non-discriminating)
+average across signal tasks: suppressed — 1 of 3 signal tasks discriminate; an average over fewer than two is not a finding
+```
