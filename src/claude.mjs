@@ -21,8 +21,11 @@ export function invoke({ prompt, systemPromptFile = null, cwd, model, streamJson
   const args = ["-p", "--setting-sources", "project", "--model", model];
   if (streamJson) args.push("--output-format", "stream-json", "--verbose");
   // Comma-separated, one argv entry, not `--disallowedTools Write Edit Bash`. The flag
-  // is variadic, and the prompt is pushed last as a positional -- a space-separated
-  // list would let the flag swallow the prompt itself. The CLI accepts either form.
+  // is variadic and the prompt is pushed last as a positional, so a space-separated list
+  // would let the flag swallow the prompt itself. UNVERIFIED against the real CLI: every
+  // test here runs against the stub with no network, so these tests pin the argv shape
+  // we construct, never that the CLI accepts it or honours it. The first live run must
+  // confirm it -- see test/live/README.md.
   if (disallowedTools?.length) args.push("--disallowedTools", disallowedTools.join(","));
   if (systemPromptFile) args.push("--append-system-prompt-file", systemPromptFile);
   args.push(prompt);

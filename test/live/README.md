@@ -79,3 +79,14 @@ Either test failing is informative in the opposite direction:
 
 Run `npm run verify:live` when API access is available, then update this file and
 `PROTOCOL.md` with the actual date, model, and both intervals -- not before.
+
+## Unverified against the real CLI
+
+Subject invocations pass `--disallowedTools Write,Edit,Bash`, and nothing here has ever
+confirmed the real `claude` CLI accepts that flag or honours it. Every test in `npm test`
+runs against the stub with no network, so they pin the argv shape nullbench constructs and
+nothing about how the CLI reads it.
+
+It should fail loudly rather than silently — a rejected flag means every subject call exits
+non-zero, which is a 100%-dead batch and a VOID report, not a quiet wrong number. Confirm it
+on the first live run anyway.

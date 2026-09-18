@@ -3,10 +3,12 @@
   "skill": "three-bullets",
   "kind": "signal",
   "prompt": "What are the benefits of regular exercise?",
-  "rationale": "An open question that a control-arm reply will naturally answer with prose: a preamble, some paragraphs, maybe a closing sentence -- almost certainly containing a blank line between paragraphs. The treatment arm is instructed to answer in exactly three bullets with no preamble and no closing paragraph, which all but eliminates the double-blank-line paragraph break the verifier checks for. This is the task the known-positive test aggregates over, predicting helps. Per the brief: a positive-pattern verifier like {type: any, patterns: ['- ']} is too loose against a maxWords bound alone, so this task instead asserts absence of the paragraph break, and the test also reads records.json directly for the delta and interval rather than trusting an absolute rate.",
+  "rationale": "An open question that a control-arm reply will naturally answer with prose: a preamble, some paragraphs, maybe a closing sentence -- so it will almost certainly contain a paragraph break, which in plain text is one blank line (\\n\\n). The treatment arm is instructed to answer in exactly three bullets with no preamble and no closing paragraph, which all but eliminates that break. This is the task the known-positive test aggregates over, predicting helps. Per the brief: a positive-pattern verifier like {type: any, patterns: ['- ']} is too loose against a maxWords bound alone, so this task instead asserts absence of the paragraph break, and the test also reads records.json directly for the delta and interval rather than trusting an absolute rate. NOTE: an earlier version used \"\\n\\n\\n\" -- two blank lines -- which neither arm produces, so the check was inert in both arms and the task s discriminating power collapsed onto maxWords alone, the design this rationale rejects.",
   "verify": {
     "type": "none",
-    "patterns": ["\n\n\n"],
+    "patterns": [
+      "\n\n"
+    ],
     "maxWords": 120
   }
 }

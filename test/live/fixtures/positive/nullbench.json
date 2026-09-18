@@ -6,7 +6,7 @@
     {
       "id": "shape",
       "file": "tasks/shape.json",
-      "sha256": "cff5eb40bfc675f9a1487a9325d0283d7c48d8b80c56906c4bdfa564f5eca1ec",
+      "sha256": "ee7386ffe15ee67181a92d7b3aa9a6cb411dd247afd23d4eea8d9a50c5027e65",
       "kind": "signal",
       "predict": "helps"
     },
