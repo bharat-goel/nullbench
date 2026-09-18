@@ -37,9 +37,10 @@ Read this before you read anything else as a claim.
   Zero dead runs in either. On that model the runner neither manufactures effects nor
   reports null for everything — which is the whole point of running both, since a harness
   that always returns null passes the placebo arm perfectly.
-- **That is one 12B local model, and the two arms were run as separate invocations rather
-  than a single `npm run verify:live`.** Neither arm has run against a hosted model. See
-  the Placebo status block in `PROTOCOL.md` for exactly what was and was not established.
+  `npm run verify:live` passes both arms in one invocation, 2/2, and the intervals
+  reproduce exactly across separate runs.
+- **That is one 12B local model. Neither arm has run against a hosted model.** See the
+  Placebo status block in `PROTOCOL.md` for exactly what was and was not established.
 
 The prediction this README carried before the run, stated so it could be wrong: two of the
 three signal tasks would come back non-discriminating, leaving one, which is below the

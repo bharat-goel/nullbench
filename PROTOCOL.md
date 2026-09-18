@@ -28,18 +28,19 @@ an interval spanning zero. A mechanically detectable skill ("answer in exactly t
 bullets", deterministically verified) produced 0/10 control against 10/10 treatment. Both
 runs were CONFIRMATORY.
 
-Two caveats that keep this from being a stronger claim than it is:
+Verified by `npm run verify:live` in a single invocation: **2 tests, 2 passed**, 48.5
+minutes. The intervals above are byte-identical to an earlier pair of separate per-arm
+runs, so they reproduce across invocations rather than being one lucky batch.
 
-- **The arms were run as two separate `nullbench` invocations, not as one
-  `npm run verify:live`.** The reported intervals are what that command's assertions
-  check, and each satisfies them, but the single-command pass has not been performed.
-- **This is one 12B local model.** It says the runner can separate signal from noise on
-  that model. It says nothing about a hosted model, and the cobra worked example in
-  `examples/cobra/` — which did detect `+80.0pp [+37.0pp, +91.6pp]` against a matched
-  control on Sonnet — is separate evidence, not a second bracket.
+One caveat remains, and it is not a small one:
 
-Re-running the known-positive arm requires `--concurrency 1`: at the default of 4, LM
-Studio drops connections and the batch comes back VOID. See `test/live/README.md`.
+- **This is one 12B local model.** It establishes that the runner can separate signal from
+  noise on that model. It says nothing about a hosted model. The cobra worked example in
+  `examples/cobra/` — which detected `+80.0pp [+37.0pp, +91.6pp]` against a matched control
+  on Sonnet — is separate evidence, not a second bracket.
+
+Reproducing this requires `NULLBENCH_LIVE_CONCURRENCY=1`: at the runner's default of 4,
+LM Studio drops connections and the batch comes back VOID. See `test/live/README.md`.
 
 **What that means for every other number nullbench prints.** The bracket is the guarantee
 that the runner does not manufacture effects. Its placebo arm is a well-written skill

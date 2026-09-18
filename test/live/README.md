@@ -10,10 +10,10 @@
 Both arms matter. A harness that always reports null passes the placebo arm perfectly,
 so that arm alone establishes nothing; the known-positive arm is what rules it out.
 
-Two limits on the claim: neither arm has run against a hosted model, and the two were run
-as separate `nullbench` invocations rather than a single `npm run verify:live`. The
-reported intervals are what that command's assertions check and each satisfies them, but
-the single-command pass has not been performed.
+`npm run verify:live` passes both arms in one invocation — 2 tests, 2 passed, 48.5
+minutes — with intervals byte-identical to an earlier pair of separate per-arm runs.
+
+One limit on the claim: neither arm has run against a hosted model.
 
 An earlier attempt at the known-positive arm came back VOID — LM Studio dropped
 connections at the default concurrency of 4, `fetch failed` on 39 of 40 calls. That was
