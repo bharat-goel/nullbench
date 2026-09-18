@@ -135,18 +135,21 @@ function withArgvEcho(fn) {
   });
 }
 
-test("disallowedTools is passed as one comma-separated argument, and the prompt stays last", async () => {
+test("disallowedTools is a single --flag=value token, so it cannot swallow the prompt", async () => {
   await withArgvEcho(async () => {
     const r = await invoke({
       prompt: "the actual prompt", cwd: tmpdir(), model: "sonnet",
       disallowedTools: ["Write", "Edit", "Bash"],
     });
     const argv = JSON.parse(r.out);
-    const i = argv.indexOf("--disallowedTools");
-    assert.notEqual(i, -1, "the flag must actually reach the CLI");
-    // One argv entry, not three. `--disallowedTools Write Edit Bash <prompt>` would let
-    // the variadic flag swallow the positional prompt.
-    assert.equal(argv[i + 1], "Write,Edit,Bash");
+    // The flag is variadic in the real CLI. Passing the value as its own argv entry lets
+    // it keep consuming, INCLUDING the trailing positional prompt -- verified against the
+    // real binary, which turned every word of the prompt into a bogus deny rule
+    // ("Permission deny rule \"Our\" matches no known tool") and produced 97 dead runs out
+    // of 100. Only the =value form terminates it.
+    assert.ok(argv.includes("--disallowedTools=Write,Edit,Bash"),
+      `expected a single --disallowedTools=... token, got ${JSON.stringify(argv)}`);
+    assert.equal(argv.indexOf("--disallowedTools"), -1, "the separate-entry form is the bug");
     assert.equal(argv[argv.length - 1], "the actual prompt", "the prompt must remain the last positional");
   });
 });

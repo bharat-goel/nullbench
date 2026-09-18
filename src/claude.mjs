@@ -21,23 +21,29 @@ export function binaryPath() {
   return bin.includes("/") ? resolve(STARTED_IN, bin) : bin;
 }
 
-// Tools the SUBJECT is denied. Nothing in the protocol requires the subject to mutate
-// its cwd: every verifier (any, ordered, none, judge) reads stdout and nothing else. A
-// subject that can write leaves artifacts behind, and an artifact is only ever a
-// contamination vector -- it can never improve a measurement. Belt to the per-run
-// sandbox's braces in src/runner.mjs.
+// NOT USED for subject invocations, deliberately -- kept because the plumbing is correct
+// and a caller may want it. The final review recommended denying the subject Write/Edit/
+// Bash on the premise that "nothing in the protocol needs the subject to mutate its cwd".
+// That premise is false. cobra's ic-agent-under-pressure hands the model a real failing
+// test suite in a fixture and grades whether it finds the truncation bug; denying those
+// tools changes the task. A live run produced treatment replies reading "this session has
+// no file-write or shell-execution tool at all". cobra's own published numbers were
+// measured with no tool restriction, so restricting here would also make the worked
+// example non-comparable to the figures it exists to reproduce. Contamination is closed by
+// the per-run sandbox in src/runner.mjs, which is destroyed after every single call.
 export const SUBJECT_DISALLOWED_TOOLS = ["Write", "Edit", "Bash"];
 
 export function invoke({ prompt, systemPromptFile = null, cwd, model, streamJson = false, disallowedTools = null }) {
   const args = ["-p", "--setting-sources", "project", "--model", model];
   if (streamJson) args.push("--output-format", "stream-json", "--verbose");
-  // Comma-separated, one argv entry, not `--disallowedTools Write Edit Bash`. The flag
-  // is variadic and the prompt is pushed last as a positional, so a space-separated list
-  // would let the flag swallow the prompt itself. UNVERIFIED against the real CLI: every
-  // test here runs against the stub with no network, so these tests pin the argv shape
-  // we construct, never that the CLI accepts it or honours it. The first live run must
-  // confirm it -- see test/live/README.md.
-  if (disallowedTools?.length) args.push("--disallowedTools", disallowedTools.join(","));
+  // `--disallowedTools=a,b,c` as ONE token. The flag is variadic, so passing the value as
+  // a separate argv entry lets it keep consuming -- including the trailing positional
+  // prompt. VERIFIED against the real CLI, after the separate-entry form silently ate the
+  // prompt and turned every word of it into a bogus deny rule:
+  //   Permission deny rule "Our" matches no known tool -- check for typos.
+  // 97 of 100 runs produced no reply and the batch correctly came back VOID. The earlier
+  // comment here asserted the CLI accepted either form; it does not.
+  if (disallowedTools?.length) args.push(`--disallowedTools=${disallowedTools.join(",")}`);
   if (systemPromptFile) args.push("--append-system-prompt-file", systemPromptFile);
   args.push(prompt);
 

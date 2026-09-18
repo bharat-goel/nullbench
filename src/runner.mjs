@@ -8,7 +8,7 @@
 import { mkdtempSync, mkdirSync, writeFileSync, cpSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { invoke, SUBJECT_DISALLOWED_TOOLS } from "./claude.mjs";
+import { invoke } from "./claude.mjs";
 import { assertIsolated } from "./leakage.mjs";
 import { verify } from "./verify.mjs";
 import { runJudge } from "./judge.mjs";
@@ -114,7 +114,6 @@ export async function runSuite({
           prompt: task.spec.prompt,
           systemPromptFile: cond === "treatment" ? skillFile : null,
           cwd, model: requested.model,
-          disallowedTools: SUBJECT_DISALLOWED_TOOLS,
         });
 
         const name = `${task.id}__${cond}__${rep}`;
