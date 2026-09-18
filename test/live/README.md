@@ -90,3 +90,27 @@ nothing about how the CLI reads it.
 It should fail loudly rather than silently — a rejected flag means every subject call exits
 non-zero, which is a 100%-dead batch and a VOID report, not a quiet wrong number. Confirm it
 on the first live run anyway.
+
+## Running the bracket against a local model
+
+`tools/local-claude.mjs` adapts any OpenAI-compatible endpoint (LM Studio, llama.cpp) to
+the interface the runner expects. Measured against `gemma-4-12b-qat` on a 24 GB machine:
+
+```bash
+NULLBENCH_CLAUDE_BIN=$PWD/tools/local-claude.mjs \
+NULLBENCH_LOCAL_MODEL=google/gemma-4-12b-qat \
+NULLBENCH_LOCAL_TIMEOUT_MS=900000 \
+node bin/nullbench.mjs test/live/fixtures/placebo --yes --concurrency 1
+```
+
+Three things are load-bearing and were each learned the hard way:
+
+- **Absolute path** for `NULLBENCH_CLAUDE_BIN`. Every invocation runs in a fresh sandbox,
+  so a relative path resolves against that sandbox. (nullbench now resolves it for you,
+  but the habit is worth keeping.)
+- **`--concurrency 1`.** The default of 4 makes LM Studio drop connections on a single
+  GPU — observed as `fetch failed` on 39 of 40 calls.
+- **A long timeout.** Local replies took ~2m15s; the adapter's 180s default is not enough.
+
+A local run measures *that model*, not the one a suite registered. It validates the
+harness, not the skill's effect on a hosted model.

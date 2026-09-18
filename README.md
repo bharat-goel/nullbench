@@ -125,6 +125,7 @@ nullbench . --yes                    # skip the confirmation prompt
 nullbench . --cost-per-call 0.015    # the built-in price is a placeholder, not a quote
 nullbench . --task my-task           # runs one task — and stamps EXPLORATORY, by design
 nullbench . --skill ../other/SKILL.md  # test a different skill — also EXPLORATORY, by design
+nullbench . --concurrency 1          # one call at a time; required for a local model
 ```
 
 `--reps`, `--model` and `--judge-model` override the registered values the same way, and

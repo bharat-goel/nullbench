@@ -55,7 +55,7 @@ export function findRepoRoot(dir) {
 }
 
 export function parseArgs(argv) {
-  const out = { dir: ".", reps: null, model: null, judgeModel: null, taskIds: [], yes: false, dryRun: false, skill: null, costPerCall: 0.02 };
+  const out = { dir: ".", reps: null, model: null, judgeModel: null, taskIds: [], yes: false, dryRun: false, skill: null, costPerCall: 0.02, concurrency: null };
   const rest = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -65,6 +65,7 @@ export function parseArgs(argv) {
     else if (a === "--task") out.taskIds.push(operand(argv[++i], "--task"));
     else if (a === "--skill") out.skill = operand(argv[++i], "--skill");
     else if (a === "--cost-per-call") out.costPerCall = floatArg(argv[++i], "--cost-per-call");
+    else if (a === "--concurrency") out.concurrency = intArg(argv[++i], "--concurrency");
     else if (a === "--yes") out.yes = true;
     else if (a === "--dry-run") out.dryRun = true;
     else rest.push(a);
@@ -223,6 +224,11 @@ export async function main(argv, { stdout = process.stdout, stdin = process.stdi
 
   const { records } = await runSuite({
     registration, requested, skillFile, fixtureRoot: dir, repoRoot, rawDir: join(outDir, "raw"),
+    // Default 4 suits a hosted endpoint. A local model behind LM Studio drops
+    // connections under it -- observed as `fetch failed` on 39 of 40 calls, which is a
+    // VOID report rather than a wrong number, but still a wasted run. --concurrency 1
+    // is the right setting for a single local GPU.
+    ...(args.concurrency ? { concurrency: args.concurrency } : {}),
     onProgress: (done, total, name, pass) =>
       stdout.write(`\r  ${done}/${total}  ${pass ? "PASS" : "FAIL"}  ${name.padEnd(42)}`),
   });

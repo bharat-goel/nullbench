@@ -170,3 +170,10 @@ test("--cost-per-call rejects a non-number instead of printing $NaN", () => {
   assert.throws(() => parseArgs([".", "--cost-per-call", "-1"]), /must be a non-negative number/);
   assert.equal(parseArgs([".", "--cost-per-call", "0.015"]).costPerCall, 0.015);
 });
+
+test("--concurrency is parsed and validated", () => {
+  assert.equal(parseArgs(["."]).concurrency, null, "unset means the runner's own default");
+  assert.equal(parseArgs([".", "--concurrency", "1"]).concurrency, 1);
+  assert.throws(() => parseArgs([".", "--concurrency", "0"]), /positive integer/);
+  assert.throws(() => parseArgs([".", "--concurrency"]), /requires a value/);
+});
