@@ -30,6 +30,15 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 // reported as the former. Override with NULLBENCH_LIVE_TIMEOUT_MS.
 const TEST_TIMEOUT = Number(process.env.NULLBENCH_LIVE_TIMEOUT_MS || 14_400_000);
 
+// The runner's default of 4 is right for a hosted endpoint and wrong for a single local
+// GPU: LM Studio drops connections under it and the batch comes back VOID -- `fetch
+// failed` on 39 of 40 calls, measured. Set NULLBENCH_LIVE_CONCURRENCY=1 for a local run.
+// Unset leaves the runner's own default alone, so a hosted run is unaffected.
+const ARGS = (dir) => {
+  const c = process.env.NULLBENCH_LIVE_CONCURRENCY;
+  return c ? [dir, "--yes", "--concurrency", c] : [dir, "--yes"];
+};
+
 const capture = () => { let b = ""; return { stdout: { write: (s) => (b += s, true) }, text: () => b }; };
 
 function latestRecords(dir) {
@@ -40,7 +49,7 @@ function latestRecords(dir) {
 
 test("PLACEBO: an irrelevant skill must produce a null", { timeout: TEST_TIMEOUT }, async () => {
   const dir = join(HERE, "fixtures", "placebo");
-  const code = await main([dir, "--yes"], capture());
+  const code = await main(ARGS(dir), capture());
   // A batch where every call died reports VOID and exit 1, and its rows carry null
   // intervals -- and `discriminates({lo: null, hi: null})` is false, which reads as "the
   // placebo produced a null". That is this bracket's own failure mode passing its own
@@ -64,7 +73,7 @@ test("PLACEBO: an irrelevant skill must produce a null", { timeout: TEST_TIMEOUT
 
 test("KNOWN POSITIVE: a trivially detectable effect must be detected", { timeout: TEST_TIMEOUT }, async () => {
   const dir = join(HERE, "fixtures", "positive");
-  const code = await main([dir, "--yes"], capture());
+  const code = await main(ARGS(dir), capture());
   assert.equal(code, 0, "the batch must have run and been gradeable; VOID (1) is not a failed detection");
   const { records } = latestRecords(dir);
   const rows = aggregate(records, [{ id: "shape", kind: "signal", predict: "helps" }]);

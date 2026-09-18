@@ -119,6 +119,19 @@ NULLBENCH_LOCAL_TIMEOUT_MS=900000 \
 node bin/nullbench.mjs test/live/fixtures/placebo --yes --concurrency 1
 ```
 
+Or the whole bracket in one command, which is what `npm run verify:live` runs:
+
+```bash
+NULLBENCH_CLAUDE_BIN=$PWD/tools/local-claude.mjs \
+NULLBENCH_LOCAL_MODEL=google/gemma-4-12b-qat \
+NULLBENCH_LOCAL_TIMEOUT_MS=900000 \
+NULLBENCH_LIVE_CONCURRENCY=1 \
+npm run verify:live
+```
+
+`NULLBENCH_LIVE_CONCURRENCY` is read by the bracket test only. Leave it unset against a
+hosted endpoint; the runner's default of 4 is correct there.
+
 Three things are load-bearing and were each learned the hard way:
 
 - **Absolute path** for `NULLBENCH_CLAUDE_BIN`. Every invocation runs in a fresh sandbox,
