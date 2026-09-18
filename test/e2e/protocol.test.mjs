@@ -276,3 +276,16 @@ test("GAMING: a harm task's `none` pattern may name the skill's vocabulary witho
   assert.doesNotMatch(cap.text(), /appears verbatim in SKILL\.md/,
     "a harm task's `none` pattern naming skill vocabulary is the negative control working, not gaming");
 });
+
+test("SKILL OVERRIDE: --skill swaps the thing under test and cannot be confirmatory", async () => {
+  const dir = makeSuite({ tasks: ALL });
+  const other = join(dir, "other-skill.md");
+  writeFileSync(other, "# a different skill\nSomething else entirely.");
+  useStub(dir, { default: { outs: ["a plain reply"] } });
+
+  const cap = capture();
+  const code = await main([dir, "--yes", "--skill", other], cap);
+  assert.equal(code, 0);
+  assert.match(cap.text(), /EXPLORATORY/, "running a skill other than the registered one cannot be confirmed");
+  assert.match(cap.text(), /skill differs/, "the report must say which skill actually ran");
+});

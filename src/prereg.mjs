@@ -28,7 +28,9 @@ const KINDS = new Set(["signal", "harm"]);
 const PREDICTIONS = new Set(["helps", "no-effect", "harms"]);
 const sha256 = (buf) => createHash("sha256").update(buf).digest("hex");
 
-export function loadRegistration(dir) {
+// skillFile defaults to the registered location. The CLI passes the resolved path so a
+// --skill override is hashed as what really ran, not as what was registered.
+export function loadRegistration(dir, skillFile = null) {
   const regPath = join(dir, "nullbench.json");
   const problems = [];
 
@@ -89,9 +91,23 @@ export function loadRegistration(dir) {
     drift.push({ code: "NO_HARM_TASK", detail: "no harm task; a suite with no negative control cannot be confirmatory" });
   }
 
+  // SKILL.md is the experiment's independent variable -- the single thing that differs
+  // between the arms -- and leaving it out of H meant editing it between registration and
+  // run changed nothing about the stamp, and `--skill elsewhere/SKILL.md` produced a
+  // CONFIRMATORY report under the same H as the registered run. A hash that claims to
+  // name what really ran has to cover it. `null` when the file is absent or unreadable:
+  // that is a structural failure the CLI rejects before spending anything, and hashing it
+  // as a distinct value keeps "no skill" from colliding with any real skill.
+  const skillPath = skillFile ?? join(dir, "SKILL.md");
+  let skillSha = null;
+  try {
+    skillSha = sha256(readFileSync(skillPath));
+  } catch { /* absent or unreadable; the CLI's structural check reports it */ }
+
   // Hashed over actual contents, not declared ones, so the hash names what really ran.
   const body = canonicalJSON({
     model: raw.model, judge_model: raw.judge_model, reps: raw.reps,
+    skill_sha256: skillSha,
     tasks: tasks.map((t) => ({ id: t.id, kind: t.kind, predict: t.predict, sha256: t.actualSha })),
   });
   const hash = sha256(Buffer.from(body, "utf8"));

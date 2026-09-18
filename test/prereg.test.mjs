@@ -123,3 +123,37 @@ test("structural problems abort rather than downgrade", () => {
   assert.ok(e.problems.some((p) => /nope\.json/.test(p)), "missing file reported");
   rmSync(dir, { recursive: true, force: true });
 });
+
+// SKILL.md is the experiment's independent variable. Before it entered H, editing it
+// between registration and run changed nothing about the stamp, and `--skill` could
+// substitute a different file entirely under the registered run's hash.
+test("the registration hash covers SKILL.md, not just the task files", () => {
+  const dir = mkdtempSync(join(tmpdir(), "nb-skillhash-"));
+  mkdirSync(join(dir, "tasks"));
+  const body = JSON.stringify({ id: "t", prompt: "p", verify: { type: "any", patterns: ["x"] } });
+  writeFileSync(join(dir, "tasks", "t.json"), body);
+  writeFileSync(join(dir, "nullbench.json"), JSON.stringify({
+    model: "sonnet", judge_model: "sonnet", reps: 4,
+    tasks: [{
+      id: "t", file: "tasks/t.json",
+      sha256: createHash("sha256").update(body).digest("hex"),
+      kind: "harm", predict: "no-effect",
+    }],
+  }));
+
+  writeFileSync(join(dir, "SKILL.md"), "# one\n");
+  const a = loadRegistration(dir);
+  writeFileSync(join(dir, "SKILL.md"), "# two\n");
+  const b = loadRegistration(dir);
+
+  assert.deepEqual(a.drift, [], "changing only SKILL.md must not be task drift");
+  assert.deepEqual(b.drift, []);
+  assert.notEqual(a.hash, b.hash, "editing the skill must change the registration hash");
+
+  // A missing skill hashes distinctly rather than colliding with any real skill.
+  rmSync(join(dir, "SKILL.md"));
+  assert.notEqual(loadRegistration(dir).hash, a.hash);
+  assert.notEqual(loadRegistration(dir).hash, b.hash);
+
+  rmSync(dir, { recursive: true, force: true });
+});

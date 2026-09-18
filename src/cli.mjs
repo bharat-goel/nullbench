@@ -78,9 +78,13 @@ export async function main(argv, { stdout = process.stdout, stdin = process.stdi
   const dir = resolve(args.dir);
   const repoRoot = findRepoRoot(dir);
 
+  // Resolved before loadRegistration: the skill is hashed into H, so the registration
+  // must be loaded knowing which skill file will actually be injected.
+  const skillFile = args.skill ? resolve(args.skill) : join(dir, "SKILL.md");
+
   let registration;
   try {
-    registration = loadRegistration(dir);
+    registration = loadRegistration(dir, skillFile);
   } catch (e) {
     if (e instanceof RegistrationError) { stdout.write(`${e.message}\n`); return 2; }
     throw e;
@@ -91,6 +95,10 @@ export async function main(argv, { stdout = process.stdout, stdin = process.stdi
     model: args.model ?? registration.config.model,
     judgeModel: args.judgeModel ?? registration.config.judge_model,
     taskIds: args.taskIds.length ? args.taskIds : registration.tasks.map((t) => t.id),
+    // A --skill override swaps the thing under test. H already covers the substituted
+    // file's contents, but a reader comparing two reports needs to see that the skill
+    // came from somewhere other than the registered location.
+    skillOverride: args.skill ? resolve(args.skill) : null,
   };
 
   // Structural, not drift: an unknown id and a missing SKILL.md both mean the run
@@ -98,7 +106,6 @@ export async function main(argv, { stdout = process.stdout, stdin = process.stdi
   // missing SKILL.md crashed AFTER the whole batch was paid for.
   const known = new Set(registration.tasks.map((t) => t.id));
   const unknown = requested.taskIds.filter((id) => !known.has(id));
-  const skillFile = args.skill ? resolve(args.skill) : join(dir, "SKILL.md");
   const structural = [
     ...unknown.map((id) => `--task "${id}" is not in the registration`),
     ...(existsSync(skillFile) ? [] : [`no SKILL.md at ${skillFile}`]),

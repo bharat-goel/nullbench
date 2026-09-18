@@ -173,12 +173,15 @@ hash, and two genuinely different registrations must not share one.
 ```
 H = sha256(canonical({
       model, judge_model, reps,
+      skill_sha256,
       tasks: [ { id, kind, predict, sha256 } ]
     }))
 ```
 
 with `tasks` sorted by `id`, and each `sha256` being the hash of **the task file's bytes
 as found on disk at run time** — not the value declared in the registration.
+`skill_sha256` is the hash of the injected skill file's bytes, likewise as found at run
+time, or `null` when no skill file is present.
 
 `H` is stamped into the report header and every ledger entry, abbreviated to its first 16
 hex characters for display.
@@ -191,6 +194,12 @@ Two properties follow, and both are deliberate:
   changes `H` even if the declared `sha256` was updated to match. The
   declared-vs-actual disagreement is reported separately as `HASH_MISMATCH` drift, and
   that is what demotes the run to EXPLORATORY.
+- **The skill is covered.** It is the experiment's independent variable — the only thing
+  that differs between the arms — so a hash that omitted it would let the thing under
+  test be edited, or swapped wholesale via `--skill`, while the stamp stayed identical.
+  An earlier version of this protocol did omit it. A `--skill` override is additionally
+  recorded as a named reason and demotes the run to EXPLORATORY, so a reader can tell a
+  substituted skill from a merely edited one.
 
 (The design document specified a concatenation over the whole registration file; §5.2
 there was amended to this formula on 2026-09-17, with the reasoning above.)

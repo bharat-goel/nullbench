@@ -124,7 +124,11 @@ nullbench . --dry-run                # preflight only: costs nothing, writes not
 nullbench . --yes                    # skip the confirmation prompt
 nullbench . --cost-per-call 0.015    # the built-in price is a placeholder, not a quote
 nullbench . --task my-task           # runs one task — and stamps EXPLORATORY, by design
+nullbench . --skill ../other/SKILL.md  # test a different skill — also EXPLORATORY, by design
 ```
+
+`--reps`, `--model` and `--judge-model` override the registered values the same way, and
+each one is named in the report as a reason the run departed from what was registered.
 
 Full field reference, canonicalization rules, hash construction, exact class conditions,
 ledger format and the interval methods: `PROTOCOL.md`.
@@ -132,7 +136,7 @@ ledger format and the interval methods: `PROTOCOL.md`.
 Verify without spending anything:
 
 ```bash
-npm test                             # 118 tests, no network, no API key
+npm test                             # 126 tests, no network, no API key
 node bin/nullbench.mjs examples/cobra --dry-run
 ```
 

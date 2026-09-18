@@ -298,9 +298,10 @@ time, by the rubric, and nullbench does not bind how a rubric is *applied*.
 
 The rubric text itself is pinned: it lives inside the task file, whose `sha256` is in the
 registration and hashed into `H`, so editing a rubric between runs changes the
-registration hash and forces the report to EXPLORATORY. (Verified: rewriting one
-sentence of `ic-smoke-denominator`'s rubric in the worked example moves the hash from
-`54b9cf36` to `0bdf12ea` and raises a drift line.) What remains unconstrained is the
+registration hash and forces the report to EXPLORATORY. (Verified against the worked
+example: appending a single sentence to `ic-smoke-denominator`'s rubric changes the
+registration hash and raises a `HASH_MISMATCH` drift line. Reproduce it by editing that
+rubric and running `nullbench examples/cobra --dry-run`.) What remains unconstrained is the
 call itself. A fixed rubric still has to be applied to an arguable reply, by a judge
 written by the same person who wants the result, and nothing records that a borderline
 case was decided generously. Pre-registration constrains the prediction and freezes the

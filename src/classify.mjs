@@ -46,6 +46,9 @@ export function classify({ registration, requested, gradedCounts, canaryOk }) {
   if (requested.judgeModel !== registration.config.judge_model) {
     reasons.push(`judge model differs: registered ${registration.config.judge_model}, ran ${requested.judgeModel}`);
   }
+  if (requested.skillOverride) {
+    reasons.push(`skill differs: registered SKILL.md in the suite directory, ran ${requested.skillOverride}`);
+  }
   if (canaryOk === false) reasons.push("judge canaries misgraded; judged tasks cannot be confirmed");
 
   return { klass: reasons.length ? "EXPLORATORY" : "CONFIRMATORY", reasons };

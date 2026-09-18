@@ -87,7 +87,7 @@ This is what that prints, run against the registration in this directory:
 
 ```
 nullbench — 5 registered task(s), running 5
-  registration  54b9cf365dc03249
+  registration  f64506fb14e3c25f
   model         sonnet (judge sonnet), reps 10
   subject runs  100
   judge calls   60
