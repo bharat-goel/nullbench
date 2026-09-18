@@ -276,10 +276,17 @@ mandatory `predict` (`helps`, `no-effect`, `harms`) recorded in the registration
 the run, hashed into `H`, and scored HIT or MISS in the ledger whether or not it was
 borne out — so the *direction* is committed to before the data exists. That is not the
 failure this entry describes. The ambiguity in the Datadog case was resolved at grading
-time, by the rubric, and nullbench does not bind the grading criterion: the rubric is
-written by the same person, can be rewritten between runs, and its text is inside the
-task file rather than under any separate commitment. Pre-registration constrains the
-prediction; the judgement that decides an arguable reply remains unconstrained.
+time, by the rubric, and nullbench does not bind how a rubric is *applied*.
+
+The rubric text itself is pinned: it lives inside the task file, whose `sha256` is in the
+registration and hashed into `H`, so editing a rubric between runs changes the
+registration hash and forces the report to EXPLORATORY. (Verified: rewriting one
+sentence of `ic-smoke-denominator`'s rubric in the worked example moves the hash from
+`54b9cf36` to `0bdf12ea` and raises a drift line.) What remains unconstrained is the
+call itself. A fixed rubric still has to be applied to an arguable reply, by a judge
+written by the same person who wants the result, and nothing records that a borderline
+case was decided generously. Pre-registration constrains the prediction and freezes the
+criterion; it cannot supply the judgement.
 
 ### 13. The file drawer
 

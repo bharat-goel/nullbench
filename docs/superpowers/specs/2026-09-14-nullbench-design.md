@@ -284,7 +284,11 @@ the inside, the real numbers from the `cobra` runs, and nullbench's mitigation m
 12. **Ambiguous cases scored in the skill's favour.** The Datadog trigger prompt is
     genuinely arguable — setting an alert threshold is defining a measure — and was
     counted as a false fire anyway. Scoring ambiguity favourably is how the original
-    inflated numbers happened. → **mitigated**: prereg forces the call before the run.
+    inflated numbers happened. → **open**: prereg freezes the rubric (its text is in the
+    task file, hashed into H, so an edit between runs forces EXPLORATORY) but cannot
+    supply the judgement that decides an arguable reply. Amended from **mitigated**
+    during implementation: the original status counted freezing the criterion as
+    resolving the failure, which is the same conflation the entry describes.
 13. **The file drawer.** Three of four batches were discarded to produce the published
     table. → **caught**: the ledger.
 
