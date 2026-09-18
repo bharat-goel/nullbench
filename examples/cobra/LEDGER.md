@@ -17,3 +17,17 @@ note: task "ic-smoke-denominator" treatment: 0 graded runs, 8 required
 note: task "ic-sound-measure" control: 0 graded runs, 8 required
 note: task "ic-sound-measure" treatment: 0 graded runs, 8 required
 ```
+
+## 2026-09-18T20:23:53Z · VOID · H=f64506fb14e3c25f
+```
+model=sonnet judge=sonnet reps=1
+note: task "ic-clock-exclusion" control: 1 graded runs, 3 required
+note: task "ic-clock-exclusion" treatment: 1 graded runs, 3 required
+```
+
+## 2026-09-18T20:24:30Z · VOID · H=f64506fb14e3c25f
+```
+model=sonnet judge=sonnet reps=3
+note: task "ic-agent-under-pressure" control: 0 graded runs, 3 required
+note: task "ic-agent-under-pressure" treatment: 0 graded runs, 3 required
+```

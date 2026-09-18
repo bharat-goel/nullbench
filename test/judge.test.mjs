@@ -138,3 +138,30 @@ test("a canary naming an unregistered or non-judged task aborts the run", () => 
   assert.throws(() => loadCanaries(f, registration), /not judge-graded/);
   rmSync(dir, { recursive: true, force: true });
 });
+
+test("a canary call that never answered is dead, not a misgrade", async () => {
+  // A session limit mid-batch turned a real 13/13 canary run into "7/13 correct". None
+  // of the six had misgraded anything -- they never reached the model. Reporting a judge
+  // as broken when the API was is the same dead-run-versus-wrong-answer confusion the
+  // runner and the report already guard against.
+  const dir = mkdtempSync(join(tmpdir(), "nb-canary-dead-"));
+  const plan = join(dir, "plan.json");
+  writeFileSync(plan, JSON.stringify({ default: { outs: [""], code: 1 } }));
+  process.env.NULLBENCH_CLAUDE_BIN = STUB;
+  process.env.NULLBENCH_STUB_PLAN = plan;
+  process.env.NULLBENCH_STUB_STATE = join(dir, "state.json");
+  try {
+    const canaries = [
+      { id: "a", prompt: "p", rubric: "r", reply: "x", expect: "PASS" },
+      { id: "b", prompt: "p", rubric: "r", reply: "y", expect: "FAIL" },
+    ];
+    const r = await runCanaries({ canaries, model: "sonnet", cwd: dir });
+    assert.equal(r.dead.length, 2, "both calls died and must be counted as dead");
+    assert.equal(r.misgrades.length, 0, "a dead call misgraded nothing");
+    assert.equal(r.graded, 0);
+    assert.equal(r.ok, false, "an unverifiable judge is as unconfirmable as an ungated one");
+  } finally {
+    for (const k of ["NULLBENCH_CLAUDE_BIN", "NULLBENCH_STUB_PLAN", "NULLBENCH_STUB_STATE"]) delete process.env[k];
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

@@ -101,6 +101,7 @@ export function loadCanaries(path, registration) {
 // passes `repoRoot` instead and gets the per-call lifecycle.
 export async function runCanaries({ canaries, model, cwd = null, repoRoot = null }) {
   const misgrades = [];
+  const dead = [];
   for (const c of canaries) {
     const task = { prompt: c.prompt, verify: { rubric: c.rubric } };
     let dir = cwd, temporary = false;
@@ -120,7 +121,19 @@ export async function runCanaries({ canaries, model, cwd = null, repoRoot = null
       if (temporary) rmSync(dir, { recursive: true, force: true });
     }
     const expected = c.expect.toUpperCase() === "PASS";
+    // A judge that never answered did not misgrade anything -- the same dead-run-versus
+    // wrong-answer distinction the runner and the report already make, which this path
+    // was missing. Counting a dead call as a misgrade reports a judge as broken when the
+    // API was. Observed live: a session limit mid-batch turned 13/13 into 7/13, and the
+    // six "misgrades" were all calls that never reached the model.
+    if (got.failed) { dead.push({ id: c.id, why: got.why }); continue; }
     if (got.pass !== expected) misgrades.push({ id: c.id, expected: c.expect, got: got.pass ? "PASS" : "FAIL", why: got.why });
   }
-  return { ok: misgrades.length === 0, misgrades, total: canaries.length };
+  // `ok` requires that the canaries actually ran. An ungated judge and an unverifiable
+  // one are equally unconfirmable, and neither may pass silently.
+  const graded = canaries.length - dead.length;
+  return {
+    ok: misgrades.length === 0 && dead.length === 0,
+    misgrades, dead, graded, total: canaries.length,
+  };
 }

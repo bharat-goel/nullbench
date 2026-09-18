@@ -214,7 +214,10 @@ export async function main(argv, { stdout = process.stdout, stdin = process.stdi
       // runCanaries mkdtemps, isolation-checks and removes one sandbox per canary call.
       canary = await runCanaries({
         canaries: loadedCanaries, model: requested.judgeModel, repoRoot });
-      stdout.write(`judge canaries: ${canary.total - canary.misgrades.length}/${canary.total} correct\n`);
+      // Report graded separately from dead. "7/13 correct" for a batch where six calls
+      // never reached the model reads as a judge that misgraded half its cases.
+      stdout.write(`judge canaries: ${canary.graded - canary.misgrades.length}/${canary.graded} correct` +
+        (canary.dead?.length ? ` (${canary.dead.length} of ${canary.total} never answered — the judge could not be verified)` : "") + `\n`);
     }
   }
 
