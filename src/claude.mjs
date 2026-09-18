@@ -5,9 +5,20 @@
 // test/live/ runs with no network and no API key.
 
 import { spawn } from "node:child_process";
+import { resolve } from "node:path";
 
+// Resolved against the directory nullbench was STARTED in, captured at import time.
+// Every invocation is spawned with cwd set to a fresh sandbox, so a relative
+// NULLBENCH_CLAUDE_BIN -- the natural thing to type, e.g. `tools/local-claude.mjs` --
+// resolves against the sandbox and fails with ENOENT on every single call. That is a
+// 100%-dead batch whose only symptom is a VOID report, and it cost a real run here to
+// diagnose. A bare command name with no separator (`claude`) is left alone so PATH
+// lookup still works.
+const STARTED_IN = process.cwd();
 export function binaryPath() {
-  return process.env.NULLBENCH_CLAUDE_BIN || "claude";
+  const bin = process.env.NULLBENCH_CLAUDE_BIN;
+  if (!bin) return "claude";
+  return bin.includes("/") ? resolve(STARTED_IN, bin) : bin;
 }
 
 // Tools the SUBJECT is denied. Nothing in the protocol requires the subject to mutate

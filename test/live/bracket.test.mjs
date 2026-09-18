@@ -40,7 +40,13 @@ function latestRecords(dir) {
 
 test("PLACEBO: an irrelevant skill must produce a null", { timeout: TEST_TIMEOUT }, async () => {
   const dir = join(HERE, "fixtures", "placebo");
-  await main([dir, "--yes"], capture());
+  const code = await main([dir, "--yes"], capture());
+  // A batch where every call died reports VOID and exit 1, and its rows carry null
+  // intervals -- and `discriminates({lo: null, hi: null})` is false, which reads as "the
+  // placebo produced a null". That is this bracket's own failure mode passing its own
+  // test. It happened: a relative NULLBENCH_CLAUDE_BIN resolved against the per-run
+  // sandbox, every call exited ENOENT, and this test went green in 33ms.
+  assert.equal(code, 0, "the batch must have run and been gradeable; VOID (1) is not a null result");
   const { records } = latestRecords(dir);
   const rows = aggregate(records, [{ id: "reasoning", kind: "signal", predict: "no-effect" }]);
   // The loop below passes vacuously on an empty `rows` -- a renamed task id, or a batch
@@ -48,6 +54,8 @@ test("PLACEBO: an irrelevant skill must produce a null", { timeout: TEST_TIMEOUT
   // nothing was measured at all. Assert we actually have the row before judging it.
   assert.equal(rows.length, 1, "expected exactly one aggregated row for the `reasoning` task; a placebo bracket that measured nothing must fail, not pass");
   for (const r of rows) {
+    assert.ok(r.ci && r.ci.lo !== null && r.ci.hi !== null,
+      `task "${r.id}" has no interval (${JSON.stringify(r.ci)}) -- nothing was measured, which is not the same as a null result`);
     assert.equal(discriminates(r.ci), false,
       `a placebo skill produced a discriminating delta (${JSON.stringify(r.ci)}). ` +
       `The harness manufactures effects and nothing else it reports can be trusted.`);
@@ -56,10 +64,13 @@ test("PLACEBO: an irrelevant skill must produce a null", { timeout: TEST_TIMEOUT
 
 test("KNOWN POSITIVE: a trivially detectable effect must be detected", { timeout: TEST_TIMEOUT }, async () => {
   const dir = join(HERE, "fixtures", "positive");
-  await main([dir, "--yes"], capture());
+  const code = await main([dir, "--yes"], capture());
+  assert.equal(code, 0, "the batch must have run and been gradeable; VOID (1) is not a failed detection");
   const { records } = latestRecords(dir);
   const rows = aggregate(records, [{ id: "shape", kind: "signal", predict: "helps" }]);
   const row = rows[0];
+  assert.ok(row?.ci && row.ci.lo !== null && row.ci.hi !== null,
+    `no interval for the shape task (${JSON.stringify(row?.ci)}) -- nothing was measured`);
   assert.equal(discriminates(row.ci), true,
     `a known-positive skill was not detected (${JSON.stringify(row.ci)}). ` +
     `A harness that reports null for everything passes the placebo test perfectly.`);
