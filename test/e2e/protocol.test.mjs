@@ -230,3 +230,49 @@ test("DEAD JUDGE: a judge that never answers voids the batch instead of printing
     "a dead judge must not produce a printable delta -- that is the quotable null this exists to prevent");
   assert.match(ledger(dir), /VOID/, "the file drawer stays shut");
 });
+
+// PATTERN_IN_SKILL — the cobra test applied to nullbench itself.
+//
+// The gaming recipe: give a signal task a verifier pattern lifted verbatim from your own
+// SKILL.md. Control has never seen the word and cannot say it; treatment reads it off the
+// injected system prompt. Both cells swing from floor to ceiling, the intervals sit far
+// from zero, and the report reads CONFIRMATORY for a skill that did nothing. That is
+// FAILURES.md entry 1, reproduced deliberately rather than by accident.
+
+test("GAMING: a verifier pattern lifted from SKILL.md is drift, flagged before any spend", async () => {
+  const dir = makeSuite({ tasks: ALL });
+  writeFileSync(join(dir, "SKILL.md"), "# demo skill\nAlways say denominator when a count lacks one.");
+  useStub(dir, { default: { outs: ["a plain reply"] } });
+
+  // --dry-run: the flag must be raised before the user is asked to spend anything.
+  const dry = capture();
+  const dryCode = await main([dir, "--dry-run"], dry);
+  assert.equal(dryCode, 0);
+  // The CLI prints a drift entry's `detail`, not its internal `code` -- same as
+  // HASH_MISMATCH. Assert on what a user actually sees.
+  assert.match(dry.text(), /appears verbatim in SKILL\.md/);
+  assert.match(dry.text(), /denominator/, "the offending pattern must be named");
+  assert.match(dry.text(), /"sig"/, "the offending task must be named");
+  assert.match(dry.text(), /cannot be confirmatory/);
+
+  const run = capture();
+  await main([dir, "--yes"], run);
+  assert.match(run.text(), /EXPLORATORY/, "a skill-lifted pattern must block CONFIRMATORY");
+});
+
+test("GAMING: a harm task's `none` pattern may name the skill's vocabulary without being flagged", async () => {
+  // The vocabulary-leak negative control is the shape this project recommends: a harm
+  // task asserting the skill does not inject its own words into an unrelated answer MUST
+  // quote those words to do its job. Flagging it would put permanent drift on the two
+  // negative controls nullbench itself ships, and it cannot be gamed in the rewarding
+  // direction -- a skill-lifted `none` pattern can only make treatment look worse.
+  const dir = makeSuite({ tasks: ALL });
+  writeFileSync(join(dir, "SKILL.md"), "# demo skill\nBeware goodhart when a count stands in for the thing itself.");
+  useStub(dir, { default: { outs: ["a plain reply"] } });
+
+  const cap = capture();
+  const code = await main([dir, "--dry-run"], cap);
+  assert.equal(code, 0);
+  assert.doesNotMatch(cap.text(), /appears verbatim in SKILL\.md/,
+    "a harm task's `none` pattern naming skill vocabulary is the negative control working, not gaming");
+});

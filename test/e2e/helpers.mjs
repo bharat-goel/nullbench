@@ -12,7 +12,11 @@ const sha = (s) => createHash("sha256").update(s).digest("hex");
 export function makeSuite({ tasks, reps = 4, omitHarm = false, corrupt = null }) {
   const dir = mkdtempSync(join(tmpdir(), "nb-e2e-"));
   mkdirSync(join(dir, "tasks"));
-  writeFileSync(join(dir, "SKILL.md"), "# demo skill\nSay the word denominator.");
+  // Deliberately shares NO vocabulary with any verifier pattern below. An earlier
+  // version read "Say the word denominator." while SIGNAL's verifier matched
+  // "denominator" -- the exact gaming recipe PATTERN_IN_SKILL exists to flag, sitting
+  // in nullbench's own fixtures. The new check caught it, which is how it was found.
+  writeFileSync(join(dir, "SKILL.md"), "# demo skill\nAsk what a count leaves out before treating it as evidence.");
 
   const entries = [];
   for (const t of tasks) {

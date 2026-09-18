@@ -3,7 +3,7 @@
 import { mkdirSync, writeFileSync, existsSync, readFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve, dirname } from "node:path";
-import { loadRegistration, RegistrationError } from "./prereg.mjs";
+import { loadRegistration, patternDrift, RegistrationError } from "./prereg.mjs";
 import { runSuite, gradedCounts } from "./runner.mjs";
 import { runCanaries, loadCanaries } from "./judge.mjs";
 import { classify } from "./classify.mjs";
@@ -104,6 +104,18 @@ export async function main(argv, { stdout = process.stdout, stdin = process.stdi
     ...(existsSync(skillFile) ? [] : [`no SKILL.md at ${skillFile}`]),
   ];
   if (structural.length) { stdout.write(new RegistrationError(structural).message + "\n"); return 2; }
+
+  // Verifier patterns are cross-checked against SKILL.md here -- after the file is known
+  // to exist, before the preflight prints, and well before anything is spent. A verbatim
+  // lift is drift, not a structural failure: the run can happen, it just cannot be
+  // confirmed. See patternDrift's header for what it checks and what it cannot.
+  //
+  // An unreadable-but-existing SKILL.md (a directory, say) is left alone deliberately.
+  // The post-run leakage scan reads the same file and will surface it there; failing
+  // here instead would change an established exit path for an unrelated reason.
+  try {
+    registration.drift.push(...patternDrift(registration.tasks, readFileSync(skillFile, "utf8")));
+  } catch { /* unreadable SKILL.md: reported by the post-run scan, as before */ }
 
   // Canaries are loaded (and validated) here, before the dry-run return, not just
   // before they are run. A broken canaries.json -- one that still carries cobra's

@@ -98,3 +98,65 @@ export function loadRegistration(dir) {
 
   return { config: { model: raw.model, judge_model: raw.judge_model, reps: raw.reps }, tasks, hash, drift };
 }
+
+// Verifier patterns lifted verbatim out of SKILL.md.
+//
+// The gaming recipe this exists to interrupt: register two signal tasks whose verifier
+// is {type: "any", patterns: ["<a word from your own SKILL.md>"]}. The control arm has
+// never seen the word and cannot say it; the treatment arm reads it off the injected
+// system prompt. Both cells go from near 0/10 to 10/10, both intervals sit far from
+// zero, and the report is CONFIRMATORY. That is FAILURES.md entry 1 -- the artefact this
+// project opens with -- reproduced deliberately instead of by accident. Nothing else in
+// the runner notices it: the post-run leakage scan compares the skill's vocabulary
+// against CONTROL replies, which by construction contain none of it, so it stays silent
+// exactly when the gaming worked.
+//
+// WHICH PATTERNS ARE CHECKED, and why it is not all of them:
+//
+//   any            -- checked. A match IS the pass, so a skill-lifted pattern hands the
+//                     treatment arm the answer key.
+//   ordered        -- checked, both before[] and after[]. Same reasoning; ordering
+//                     verifiers have no legitimate reason to quote the skill.
+//   none, signal   -- checked. A signal task has no business forbidding the skill's own
+//                     words.
+//   none, harm     -- NOT checked. This is the vocabulary-leak negative control, and it
+//                     is the shape this project recommends: a harm task asserting the
+//                     skill does not inject "goodhart" or "iso 8601" into an unrelated
+//                     answer MUST name the skill's vocabulary to do its job. Flagging it
+//                     would put permanent drift on the two negative controls nullbench
+//                     itself ships (examples/cobra's ic-noop-routine and the placebo
+//                     fixture's vocabulary-leak), and it cannot be gamed in the
+//                     rewarding direction: a skill-lifted `none` pattern can only make
+//                     the treatment arm look WORSE.
+//
+// Patterns carrying no letters or digits are skipped: "\n\n" tells you nothing about
+// vocabulary and matches any SKILL.md with a blank line in it.
+//
+// What this does NOT catch, and the documentation must not claim otherwise: a paraphrase
+// of a skill phrase, a word the skill merely makes more likely, or a pattern the author
+// chose after reading skill-influenced replies. It catches a verbatim lift.
+export function patternDrift(tasks, skillText) {
+  const hay = String(skillText).toLowerCase();
+  const out = [];
+  for (const t of tasks) {
+    const v = t.spec?.verify;
+    if (!v || typeof v !== "object") continue;
+    let pats = [];
+    if (v.type === "any") pats = v.patterns ?? [];
+    else if (v.type === "ordered") pats = [...(v.before ?? []), ...(v.after ?? [])];
+    else if (v.type === "none" && t.kind !== "harm") pats = v.patterns ?? [];
+    for (const p of pats) {
+      if (typeof p !== "string") continue;
+      const needle = p.toLowerCase().trim();
+      if (!needle || !/[a-z0-9]/.test(needle)) continue;
+      if (hay.includes(needle)) {
+        out.push({
+          code: "PATTERN_IN_SKILL",
+          detail: `task "${t.id}" verifier pattern "${p}" appears verbatim in SKILL.md; ` +
+            `the treatment arm can pass it by reading its own system prompt`,
+        });
+      }
+    }
+  }
+  return out;
+}
