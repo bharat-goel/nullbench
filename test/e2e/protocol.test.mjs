@@ -202,3 +202,31 @@ test("PREFLIGHT: canary calls are counted and shown on their own line, and inclu
   assert.match(cap.text(), /canary runs {3}2\b/);
   assert.match(cap.text(), /TOTAL {9}26 CLI invocations/);
 });
+
+// CRITICAL 2's end-to-end guard. A judge that stops answering partway through a batch
+// (rate limit, auth expiry, a crashed CLI) used to be indistinguishable from a judge
+// that graded everything FAIL: runJudge set no `failed` flag, so every dead judge call
+// was recorded as a graded wrong answer. Both arms then sat at 0%, the delta came out
+// near zero with a tight interval, the graded-run floor was cleared because no cell
+// looked thin, and the batch printed as a clean, quotable null. PROTOCOL.md 5.1 says a
+// run that produced no reply leaves the denominator; a judge-graded run is no
+// exception. The subject here is healthy -- only the judge is dead -- which is what
+// makes this a test of the judge path and not of the existing DEAD RUNS case.
+test("DEAD JUDGE: a judge that never answers voids the batch instead of printing a null", async () => {
+  const dir = makeSuite({ tasks: [JUDGE, HARM] });
+  useStub(dir, {
+    rules: [
+      // Only the judge's prompt carries the rubric text, so this rule cannot match the
+      // subject invocation -- the subject's own prompt is "please grade this reply".
+      { promptIncludes: "RUBRIC TEXT", arm: "any", outs: ["VERDICT: PASS\nREASON: should never be read"], code: 1 },
+    ],
+    default: { outs: ["a healthy subject reply"] },
+  });
+  const cap = capture();
+  const code = await main([dir, "--yes"], cap);
+  assert.equal(code, 1, "a batch whose judge never answered must exit non-zero, not 0");
+  assert.match(cap.text(), /VOID/);
+  assert.ok(!/[+-]\d+\.\d+pp/.test(cap.text()),
+    "a dead judge must not produce a printable delta -- that is the quotable null this exists to prevent");
+  assert.match(ledger(dir), /VOID/, "the file drawer stays shut");
+});

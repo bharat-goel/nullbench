@@ -256,6 +256,13 @@ A run that produced no reply is **excluded from the denominator**, never counted
 failed answer. Counting a dead run as a failure fabricates an observation and biases
 whichever arm happened to die more — `FAILURES.md` entry 8.
 
+This applies to the judge exactly as it applies to the subject. A judge call that never
+returned a grade — non-zero exit, or empty output — leaves that run ungraded; a judge
+rate-limit partway through a batch must void it, not drive both arms to 0% and print a
+tidy null. A judge that *answered* without a parseable `VERDICT:` line is a different
+case: it answered, the answer was unusable, and that is a graded FAIL inside the
+denominator.
+
 A cell (one task, one arm) must have at least
 
 ```

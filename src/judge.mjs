@@ -45,8 +45,17 @@ export function parseVerdict(text) {
 
 export async function runJudge({ task, reply, model, cwd }) {
   const { out, code } = await invoke({ prompt: judgePrompt(task, reply), cwd, model });
-  if (code !== 0 || !out) return { pass: false, why: "judge failed to run" };
+  // `failed` means "no answer", not "wrong answer" -- the run leaves the denominator
+  // entirely (PROTOCOL.md 5.1). A judge that never ran produced no grade, so the
+  // subject run it was grading is ungraded. Without this flag a judge rate-limit
+  // partway through a batch drove both arms toward 0%, cleared the graded-run floor
+  // (nothing was marked failed, so no cell looked thin) and printed a tight, quotable
+  // null. That is FAILURES.md entry 8 on the judge path.
+  if (code !== 0 || !out) return { pass: false, failed: true, why: "judge failed to run" };
   const v = parseVerdict(out);
+  // Deliberately NOT `failed`. The judge answered; the answer was unusable. That is a
+  // graded FAIL and belongs in the denominator -- collapsing it into the branch above
+  // would let a judge that reliably waffles silently shrink every batch instead.
   if (!v) return { pass: false, why: "judge returned no verdict" };
   return { pass: v.pass, why: `judge: ${v.why}` };
 }

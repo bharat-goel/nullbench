@@ -48,6 +48,9 @@ test("a judge that returns nothing usable fails closed", async () => {
   const r = await runJudge({ task: { prompt: "Q", verify: { rubric: "R" } }, reply: "x", model: "sonnet", cwd: dir });
   assert.equal(r.pass, false);
   assert.match(r.why, /no verdict/);
+  // NOT failed. The judge answered; the answer was unusable. That is a graded FAIL and
+  // stays in the denominator -- see the comment on this branch in src/judge.mjs.
+  assert.ok(!r.failed, "a judge that answered unusably must still count as a graded run");
   unstub(dir);
 });
 
@@ -56,6 +59,10 @@ test("a judge whose subprocess exits non-zero fails closed", async () => {
   const r = await runJudge({ task: { prompt: "Q", verify: { rubric: "R" } }, reply: "x", model: "sonnet", cwd: dir });
   assert.equal(r.pass, false);
   assert.match(r.why, /failed to run/);
+  // The assertion that was missing, and the reason this held: pass/why alone are
+  // identical for "the judge said FAIL" and "the judge never ran". Only `failed`
+  // separates them, and only `failed` keeps a dead judge call out of the denominator.
+  assert.equal(r.failed, true, "a judge call that never produced a grade must not be counted as a graded run");
   unstub(dir);
 });
 
@@ -64,6 +71,10 @@ test("a judge whose subprocess exits 0 with empty output fails closed", async ()
   const r = await runJudge({ task: { prompt: "Q", verify: { rubric: "R" } }, reply: "x", model: "sonnet", cwd: dir });
   assert.equal(r.pass, false);
   assert.match(r.why, /failed to run/);
+  // The assertion that was missing, and the reason this held: pass/why alone are
+  // identical for "the judge said FAIL" and "the judge never ran". Only `failed`
+  // separates them, and only `failed` keeps a dead judge call out of the denominator.
+  assert.equal(r.failed, true, "a judge call that never produced a grade must not be counted as a graded run");
   unstub(dir);
 });
 
