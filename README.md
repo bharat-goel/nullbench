@@ -31,15 +31,15 @@ Read this before you read anything else as a claim.
 - **The worked example has been run**, on Sonnet, 2026-09-18: 173 invocations, judge
   canaries 13/13, report CONFIRMATORY. The table is in `examples/cobra/README.md` and the
   run is in `examples/cobra/LEDGER.md` alongside the three attempts that failed first.
-- **The placebo half of the live bracket has been run** — on a local `gemma-4-12b-qat`,
-  not on a hosted model. An irrelevant skill produced `+0.0pp [-27.8pp, +27.8pp]`,
-  non-discriminating, over 40 graded runs. The runner does not manufacture effects on that
-  model.
-- **The known-positive half has not completed.** LM Studio dropped connections under the
-  runner's default concurrency and the batch came back VOID. So the other direction — that
-  this runner can *detect* an effect that is really there — rests on the cobra run's
-  `+80.0pp` and not on a purpose-built positive control. See the Placebo status block in
-  `PROTOCOL.md`.
+- **Both arms of the live bracket have been run** — on a local `gemma-4-12b-qat`, not on
+  a hosted model. An irrelevant skill produced `+0.0pp [-27.8pp, +27.8pp]`, spanning zero;
+  a mechanically detectable one produced `+100.0pp [+60.7pp, +100.0pp]`, excluding it.
+  Zero dead runs in either. On that model the runner neither manufactures effects nor
+  reports null for everything — which is the whole point of running both, since a harness
+  that always returns null passes the placebo arm perfectly.
+- **That is one 12B local model, and the two arms were run as separate invocations rather
+  than a single `npm run verify:live`.** Neither arm has run against a hosted model. See
+  the Placebo status block in `PROTOCOL.md` for exactly what was and was not established.
 
 The prediction this README carried before the run, stated so it could be wrong: two of the
 three signal tasks would come back non-discriminating, leaving one, which is below the

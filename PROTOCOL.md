@@ -11,28 +11,35 @@ Version: nullbench 0.1.0. Node >= 22, zero dependencies.
 
 ## Placebo status
 
-**PARTIAL — the placebo arm has run on a local model; the known-positive arm has not
-completed. Both must pass before the bracket means anything.**
+**VERIFIED on a local model — both arms pass. Never run against a hosted model.**
 
 ```
-Last verified:            2026-09-18 (placebo only)
+Last verified:            2026-09-18
 Model:                    google/gemma-4-12b-qat, local, via tools/local-claude.mjs
 Placebo interval:         +0.0pp [-27.8pp, +27.8pp] over 40 graded runs — spans zero,
                           as required
-Known-positive interval:  NOT OBSERVED — batch came back VOID
+Known-positive interval:  +100.0pp [+60.7pp, +100.0pp] over 40 graded runs — excludes
+                          zero, as required
+Dead runs:                0 in either arm
 ```
 
-The placebo arm ran clean and CONFIRMATORY: an irrelevant skill (ISO-8601 date formatting)
-measured against reasoning tasks produced an interval spanning zero, on both its signal and
-its harm task. On that model, the runner does not manufacture effects.
+An irrelevant skill (ISO-8601 date formatting, measured against reasoning tasks) produced
+an interval spanning zero. A mechanically detectable skill ("answer in exactly three
+bullets", deterministically verified) produced 0/10 control against 10/10 treatment. Both
+runs were CONFIRMATORY.
 
-The known-positive arm did not complete. LM Studio dropped connections under the runner's
-default concurrency of 4 — `fetch failed` on 39 of 40 calls — and the batch was reported
-VOID rather than as a failed detection. Re-run it with `--concurrency 1`; see
-`test/live/README.md`. One reply did arrive and was a correct three-bullet answer, so the
-fixture and the skill are sound; what is missing is the measurement, not the mechanism.
+Two caveats that keep this from being a stronger claim than it is:
 
-Neither arm has ever run against a hosted model.
+- **The arms were run as two separate `nullbench` invocations, not as one
+  `npm run verify:live`.** The reported intervals are what that command's assertions
+  check, and each satisfies them, but the single-command pass has not been performed.
+- **This is one 12B local model.** It says the runner can separate signal from noise on
+  that model. It says nothing about a hosted model, and the cobra worked example in
+  `examples/cobra/` — which did detect `+80.0pp [+37.0pp, +91.6pp]` against a matched
+  control on Sonnet — is separate evidence, not a second bracket.
+
+Re-running the known-positive arm requires `--concurrency 1`: at the default of 4, LM
+Studio drops connections and the batch comes back VOID. See `test/live/README.md`.
 
 **What that means for every other number nullbench prints.** The bracket is the guarantee
 that the runner does not manufacture effects. Its placebo arm is a well-written skill

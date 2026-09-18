@@ -1,21 +1,24 @@
 # The live bracket
 
-**Status: placebo arm run and passed; known-positive arm not completed.** Both must
-pass before the bracket means anything.
+**Status: both arms run and passed**, on a local `gemma-4-12b-qat`, 2026-09-18.
 
-| Arm | Status | Result |
+| Arm | Result | Required |
 |---|---|---|
-| `fixtures/placebo/` | run 2026-09-18 on local `gemma-4-12b-qat` | CONFIRMATORY, `+0.0pp [-27.8pp, +27.8pp]` over 40 graded runs — spans zero, as required |
-| `fixtures/positive/` | **not completed** | VOID — LM Studio dropped connections at the default concurrency of 4 |
+| `fixtures/placebo/` | `+0.0pp [-27.8pp, +27.8pp]`, 40 graded runs, 0 dead | interval spans zero ✓ |
+| `fixtures/positive/` | `+100.0pp [+60.7pp, +100.0pp]`, 40 graded runs, 0 dead | interval excludes zero ✓ |
 
-Neither arm has run against a hosted model. The known-positive failure was
-environmental, not a failed detection: one reply did arrive and was a correct
-three-bullet answer, so the fixture and the skill are sound. Re-run it with
-`--concurrency 1` (see below).
+Both arms matter. A harness that always reports null passes the placebo arm perfectly,
+so that arm alone establishes nothing; the known-positive arm is what rules it out.
 
-A harness that always reports null passes the placebo arm perfectly. That is precisely
-why the placebo result alone proves nothing, and why this file does not describe the
-bracket as passing.
+Two limits on the claim: neither arm has run against a hosted model, and the two were run
+as separate `nullbench` invocations rather than a single `npm run verify:live`. The
+reported intervals are what that command's assertions check and each satisfies them, but
+the single-command pass has not been performed.
+
+An earlier attempt at the known-positive arm came back VOID — LM Studio dropped
+connections at the default concurrency of 4, `fetch failed` on 39 of 40 calls. That was
+environmental and was reported as an absent measurement, not as a failed detection.
+`--concurrency 1` fixed it, with zero dead runs.
 
 ## What this is
 
