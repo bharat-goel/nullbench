@@ -42,12 +42,21 @@ one-character fix; all nine scored 0% for not using the word. The reported **+70
 was a diction delta on a task both arms already passed. Re-graded by a blind rubric
 judge, the same task came back at **100% → 100%, +0.0pp**.
 
-**What nullbench does.** **caught** — behaviours with many valid phrasings go to the
+**What nullbench does.** **mitigated** — behaviours with many valid phrasings go to the
 blind rubric judge rather than a pattern list. The judge never sees the skill and is
 never told which arm produced the reply, and the shared prompt in `src/judge.mjs`
 instructs it in as many words: *do not reward or penalise vocabulary, framework names,
 formatting, or confidence.* A rubric that grades diction still defeats this; the judge
 removes the mechanism by which diction becomes the default thing graded.
+
+Deterministic verifiers remain available, so the mechanism that produced this entry is
+still reachable. `PATTERN_IN_SKILL` narrows it: at preflight, before anything is spent,
+every `any` pattern, every `ordered` term and every `none` pattern on a signal task is
+cross-checked against `SKILL.md`, and a verbatim match becomes drift that blocks
+CONFIRMATORY. That catches the literal form of this failure — a pattern lifted out of
+the skill — and nothing more. A paraphrase, a synonym, or a word the skill merely makes
+likelier all pass the check and still hand the treatment arm its answer. `mitigated`
+rather than `caught` for exactly that reason.
 
 ### 2. Loose substring matching
 
@@ -70,7 +79,8 @@ direction I expected" is not evidence the verifier works.
 > document before being caught here. The defect in cobra's published document has not
 > been fixed from this repository.
 
-**What nullbench does.** **caught** — same mechanism as entry 1. `src/verify.mjs` keeps
+**What nullbench does.** **mitigated** — same mechanisms as entry 1, and the same
+residual. `src/verify.mjs` keeps
 deterministic verifiers for behaviours that genuinely have one form (a word count, a
 forbidden term, an ordering), and its header says plainly that it cannot fix this class
 of problem for anything else.
@@ -196,6 +206,14 @@ denominator, never counted as failures. Any cell with fewer than `max(3, ceil(re
 nothing printed that could be quoted, a ledger entry naming every thin cell with its
 count, and a non-zero exit so a CI job cannot read it as success.
 
+Both halves of "produced no reply" count: a subject that never answered, and a judge
+that never graded. The second was a real gap found in this project's own final review —
+`runJudge`'s dead branch set the `pass` field but not the `failed` one, so a judge outage
+partway through a batch scored every ungraded run as a wrong answer, drove both arms
+toward 0%, and printed a tight near-zero delta that passed the graded-run floor. A dead
+judge and a confident null are indistinguishable in the output, which is the whole
+mechanism of this entry, one layer down.
+
 ### 9. Unexplained batch variance
 
 **What it looks like from the inside.** You have one batch that disagrees with its
@@ -300,11 +318,19 @@ were discarded.** Two died on an API session limit; one is entry 9. Every discar
 individually defensible, and the published document is the only reason anyone knows they
 happened — because its author chose to write it down, not because any tool made him.
 
-**What nullbench does.** **caught** — every run appends one entry to a git-tracked
+**What nullbench does.** **mitigated** — every run appends one entry to a git-tracked
 `LEDGER.md`: confirmatory, exploratory, voided, and flat alike. The append runs in a
 `finally` block, so a crash during report rendering cannot quietly remove a run from the
-record. There is no flag that skips it. A published figure means something when a reader
-can see the runs that did not make the README.
+record, and there is no flag that skips it.
+
+What that buys is append-on-run, which is not the same as no file drawer. `LEDGER.md` is
+an ordinary markdown file in the suite directory: no hash chain, no run counter, and no
+reference to it from the report. `rm LEDGER.md` and re-run until the number is good, and
+nothing in this repository can tell. The honest statement is that nullbench makes the
+record automatic for an author who keeps it, and does nothing at all against one who
+does not — there is no trusted registrar here, only a file, and `ATTRIBUTION.md` says
+the same thing about the adaptation this entry comes from. Claiming **caught** would be
+this entry's own failure: publishing the number that flatters the tool.
 
 ---
 
