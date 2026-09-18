@@ -118,3 +118,42 @@ test("concurrent stub invocations do not lose updates to the shared state file",
     assert.deepEqual(outVals.sort(), expected);
   });
 });
+
+// A standalone echo binary rather than another env knob on the stub: the assertion here
+// is about argv itself, and the stub's own argv parsing (it reads the LAST argument as
+// the prompt) is one of the two things that could break.
+function withArgvEcho(fn) {
+  const dir = mkdtempSync(join(tmpdir(), "nb-argv-"));
+  const bin = join(dir, "argv-echo.mjs");
+  writeFileSync(bin, "#!/usr/bin/env node\nprocess.stdout.write(JSON.stringify(process.argv.slice(2)));\n", { mode: 0o755 });
+  const prev = process.env.NULLBENCH_CLAUDE_BIN;
+  process.env.NULLBENCH_CLAUDE_BIN = bin;
+  return Promise.resolve(fn()).finally(() => {
+    if (prev === undefined) delete process.env.NULLBENCH_CLAUDE_BIN;
+    else process.env.NULLBENCH_CLAUDE_BIN = prev;
+    rmSync(dir, { recursive: true, force: true });
+  });
+}
+
+test("disallowedTools is passed as one comma-separated argument, and the prompt stays last", async () => {
+  await withArgvEcho(async () => {
+    const r = await invoke({
+      prompt: "the actual prompt", cwd: tmpdir(), model: "sonnet",
+      disallowedTools: ["Write", "Edit", "Bash"],
+    });
+    const argv = JSON.parse(r.out);
+    const i = argv.indexOf("--disallowedTools");
+    assert.notEqual(i, -1, "the flag must actually reach the CLI");
+    // One argv entry, not three. `--disallowedTools Write Edit Bash <prompt>` would let
+    // the variadic flag swallow the positional prompt.
+    assert.equal(argv[i + 1], "Write,Edit,Bash");
+    assert.equal(argv[argv.length - 1], "the actual prompt", "the prompt must remain the last positional");
+  });
+});
+
+test("invoke passes no tool restrictions unless asked", async () => {
+  await withArgvEcho(async () => {
+    const r = await invoke({ prompt: "p", cwd: tmpdir(), model: "sonnet" });
+    assert.ok(!JSON.parse(r.out).includes("--disallowedTools"));
+  });
+});

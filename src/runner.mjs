@@ -8,28 +8,45 @@
 import { mkdtempSync, mkdirSync, writeFileSync, cpSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { invoke } from "./claude.mjs";
+import { invoke, SUBJECT_DISALLOWED_TOOLS } from "./claude.mjs";
 import { assertIsolated } from "./leakage.mjs";
 import { verify } from "./verify.mjs";
 import { runJudge } from "./judge.mjs";
 
-// A task may declare a fixture: a small project copied fresh for every run, so a run
-// that edits files cannot contaminate the next one.
-function makeCwd(task, fixtureRoot, shared, repoRoot) {
-  if (!task.spec.fixture) return { cwd: shared, temporary: false };
-  const src = join(fixtureRoot, task.spec.fixture);
-  if (!existsSync(src)) {
-    throw new Error(`task "${task.id}" declares fixture "${task.spec.fixture}", but ${src} does not exist`);
+// ONE SANDBOX PER INVOCATION. Not per task, not per suite.
+//
+// This used to hand every non-fixture run the same `shared` directory for the whole
+// batch -- tasks x 2 arms x reps invocations, at concurrency 4, treatment and control
+// interleaved in one directory, with assertIsolated run exactly once before the first
+// job. Two ways that is fatal:
+//
+//   1. Anything a treatment run wrote was sitting there for later control runs to read.
+//   2. assertIsolated's FORBIDDEN check is point-in-time. One run creating .claude/ or
+//      CLAUDE.md in that directory meant every subsequent control run saw precisely
+//      what the check exists to prevent -- no error, no warning, no class change. That
+//      is FAILURES.md entry 5 reintroduced one level up.
+//
+// So: mkdtemp before the invocation, assertIsolated it, rmSync it in a `finally`. A
+// fixture task gets the same lifecycle with the fixture copied in first -- that path
+// was always per-run, and is now simply the general case rather than the exception.
+function makeCwd(task, fixtureRoot, repoRoot) {
+  const fixture = task.spec.fixture;
+  let src = null;
+  if (fixture) {
+    src = join(fixtureRoot, fixture);
+    if (!existsSync(src)) {
+      throw new Error(`task "${task.id}" declares fixture "${fixture}", but ${src} does not exist`);
+    }
   }
-  const dir = mkdtempSync(join(tmpdir(), "nullbench-fx-"));
-  cpSync(src, dir, { recursive: true });
+  const dir = mkdtempSync(join(tmpdir(), fixture ? "nullbench-fx-" : "nullbench-run-"));
+  if (src) cpSync(src, dir, { recursive: true });
   // A fixture is a real project copied in, and it may carry its own CLAUDE.md or
-  // .claude directory. Every cwd is checked, not just the shared one. This is
-  // deliberately strict: a fixture carrying CLAUDE.md, .claude, skills/, or AGENTS.md
-  // is indistinguishable by inspection from actual leakage, so it is refused outright
-  // rather than inspected for whether the contents are actually dangerous. The one
-  // fixture this project uses (cobra's failing-suite) contains only README.md,
-  // package.json, prorate.js and test.js, so nothing real is blocked by this.
+  // .claude directory. This is deliberately strict: a fixture carrying CLAUDE.md,
+  // .claude, skills/, or AGENTS.md is indistinguishable by inspection from actual
+  // leakage, so it is refused outright rather than inspected for whether the contents
+  // are actually dangerous. The one fixture this project uses (cobra's failing-suite)
+  // contains only README.md, package.json, prorate.js and test.js, so nothing real is
+  // blocked by this.
   //
   // Isolation is checked against repoRoot, not fixtureRoot: fixtureRoot only resolves
   // where fixture sources live (e.g. cobra-skill/eval/), and a sandbox can sit inside
@@ -37,9 +54,12 @@ function makeCwd(task, fixtureRoot, shared, repoRoot) {
   const iso = assertIsolated(dir, repoRoot);
   if (!iso.ok) {
     rmSync(dir, { recursive: true, force: true });
-    throw new Error(`fixture sandbox for "${task.id}" is not isolated:\n  - ${iso.problems.join("\n  - ")}`);
+    // Throwing aborts the whole batch, not just this task. A sandbox that fails this
+    // check means the environment is wrong, and every other run in flight shares that
+    // environment -- a contaminated batch is not salvageable one task at a time.
+    throw new Error(`sandbox for task "${task.id}" is not isolated:\n  - ${iso.problems.join("\n  - ")}`);
   }
-  return { cwd: dir, temporary: true };
+  return dir;
 }
 
 export function gradedCounts(records) {
@@ -55,15 +75,17 @@ export async function runSuite({
   registration, requested, skillFile, fixtureRoot = ".", repoRoot = fixtureRoot, rawDir = null,
   concurrency = 4, onProgress = () => {},
 }) {
-  const shared = mkdtempSync(join(tmpdir(), "nullbench-"));
-  // The shared sandbox is where every non-fixture task runs -- the common case, and
-  // the module's primary defense against control-arm contamination. It gets the same
-  // isolation check makeCwd already applies to fixture sandboxes. repoRoot defaults to
-  // fixtureRoot so every existing caller (and every Task 10 test) keeps its old
-  // behavior; the CLI passes a real, resolved repository root instead.
-  const iso = assertIsolated(shared, repoRoot);
+  // A preflight probe, and nothing else. No run executes here any more -- every
+  // invocation gets its own sandbox from makeCwd. What this still buys is failing
+  // before a single CLI call is paid for when the temp directory itself is unusable:
+  // TMPDIR pointing inside the repository under evaluation is the case that matters,
+  // and it is a property of the environment, identical for every per-run sandbox that
+  // would follow. repoRoot defaults to fixtureRoot so every existing caller keeps its
+  // old behavior; the CLI passes a real, resolved repository root instead.
+  const probe = mkdtempSync(join(tmpdir(), "nullbench-"));
+  const iso = assertIsolated(probe, repoRoot);
   if (!iso.ok) {
-    rmSync(shared, { recursive: true, force: true });
+    rmSync(probe, { recursive: true, force: true });
     throw new Error(`shared sandbox is not isolated:\n  - ${iso.problems.join("\n  - ")}`);
   }
   if (rawDir) mkdirSync(rawDir, { recursive: true });
@@ -83,30 +105,40 @@ export async function runSuite({
   async function worker(queue) {
     while (queue.length) {
       const { task, cond, rep } = queue.shift();
-      const { cwd, temporary } = makeCwd(task, fixtureRoot, shared, repoRoot);
-      const { out, err, code } = await invoke({
-        prompt: task.spec.prompt,
-        systemPromptFile: cond === "treatment" ? skillFile : null,
-        cwd, model: requested.model,
-      });
-      if (temporary) rmSync(cwd, { recursive: true, force: true });
-
-      const name = `${task.id}__${cond}__${rep}`;
-      if (rawDir) writeFileSync(join(rawDir, `${name}.txt`), out || `<<no output>>\n${err}`);
-
+      // Throws before the sandbox exists (missing fixture) or after cleaning it up
+      // itself (failed isolation check) -- either way there is nothing to unwind here.
+      const cwd = makeCwd(task, fixtureRoot, repoRoot);
       let v;
-      if (code !== 0 || !out) {
-        // Not a wrong answer -- no answer. Counting these as failures let an 83%-dead
-        // batch print a tidy -13.3pp. FAILURES.md entry 8.
-        v = { pass: false, failed: true, why: `run failed (exit ${code}): ${(out || err).slice(0, 80)}` };
-      } else if (task.spec.verify.type === "judge") {
-        v = await runJudge({ task: task.spec, reply: out, model: requested.judgeModel, cwd: shared });
-      } else {
-        v = verify(task.spec.verify, out);
-      }
+      try {
+        const { out, err, code } = await invoke({
+          prompt: task.spec.prompt,
+          systemPromptFile: cond === "treatment" ? skillFile : null,
+          cwd, model: requested.model,
+          disallowedTools: SUBJECT_DISALLOWED_TOOLS,
+        });
 
-      records.push({ task: task.id, cond, rep, pass: v.pass, failed: !!v.failed, why: v.why });
-      onProgress(++done, jobs.length, name, v.pass);
+        const name = `${task.id}__${cond}__${rep}`;
+        if (rawDir) writeFileSync(join(rawDir, `${name}.txt`), out || `<<no output>>\n${err}`);
+
+        if (code !== 0 || !out) {
+          // Not a wrong answer -- no answer. Counting these as failures let an 83%-dead
+          // batch print a tidy -13.3pp. FAILURES.md entry 8.
+          v = { pass: false, failed: true, why: `run failed (exit ${code}): ${(out || err).slice(0, 80)}` };
+        } else if (task.spec.verify.type === "judge") {
+          // The judge runs in this run's own sandbox, which is destroyed below. It is
+          // the one invocation here with no tool restrictions (see the report note),
+          // so giving it a directory nothing else will ever see is what keeps an
+          // unrestricted judge from being a cross-run channel.
+          v = await runJudge({ task: task.spec, reply: out, model: requested.judgeModel, cwd });
+        } else {
+          v = verify(task.spec.verify, out);
+        }
+
+        records.push({ task: task.id, cond, rep, pass: v.pass, failed: !!v.failed, why: v.why });
+        onProgress(++done, jobs.length, name, v.pass);
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+      }
     }
   }
 
@@ -115,9 +147,10 @@ export async function runSuite({
     await Promise.all(Array.from({ length: Math.min(concurrency, queue.length) }, () => worker(queue)));
   } finally {
     // A worker throws (e.g. a fixture failing assertIsolated), which rejects
-    // Promise.all -- without `finally`, the shared sandbox mkdtemp'd at the top of
+    // Promise.all -- without `finally`, the probe directory mkdtemp'd at the top of
     // this function is left behind on disk permanently, one leak per rejecting call.
-    rmSync(shared, { recursive: true, force: true });
+    // Per-run sandboxes clean themselves up in the worker's own `finally`.
+    rmSync(probe, { recursive: true, force: true });
   }
   return { records };
 }

@@ -353,13 +353,27 @@ the `note:` lines naming the thin cells.
 
 ## 7. Isolation
 
-Both arms run in a fresh temp directory outside the repository, created with `mkdtemp`
-and invoked with `--setting-sources project`. Before any run, the sandbox is checked:
+Every invocation — each arm, each rep, each task — gets its own temp directory outside
+the repository, created with `mkdtemp` immediately before the call, invoked with
+`--setting-sources project`, and removed immediately after. One sandbox per run, not one
+per task and not one per batch: a directory shared across runs makes the check below
+point-in-time, so anything a run creates afterwards is visible to every later run in the
+other arm, with no error and no change of class.
+
+The subject is additionally invoked with `--disallowedTools Write,Edit,Bash`. No verifier
+reads anything but stdout, so the subject has no reason to touch its cwd, and an artifact
+it leaves behind can only ever be a contamination vector. The judge is not restricted; it
+runs in the same per-run sandbox, which is destroyed with the run.
+
+Before each run, the sandbox is checked:
 
 - it must not be inside the repository root (found by walking up from the registration
   directory to the nearest `.git`, so a suite living in a subdirectory of a larger repo is
   still protected from that whole repo);
 - it must not contain `CLAUDE.md`, `.claude`, `skills`, or `AGENTS.md`.
+
+A failed check aborts the whole batch, not the one task: a sandbox that fails it means
+the environment is wrong, and every run in flight shares that environment.
 
 A fixture is copied fresh for every run and is checked by the same rule; a fixture
 carrying any of those four entries is refused outright rather than inspected, because it

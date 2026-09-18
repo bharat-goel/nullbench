@@ -196,12 +196,54 @@ test("a fixture carrying CLAUDE.md is rejected as not isolated", async () => {
   rmSync(fixtureRoot, { recursive: true, force: true });
 });
 
-// Only the shared sandbox's own prefix -- "nullbench-fx-" fixture sandboxes are a
-// separate, already-cleaned-up lifecycle (makeCwd removes them itself, on both success
-// and isolation failure) and must not be counted here, or a real leak of the shared
-// sandbox could hide behind fixture sandboxes correctly appearing and disappearing.
+// A run that writes into its cwd must not be visible to any later run. This is the
+// regression guard for the shared-sandbox defect: one `shared` directory was handed to
+// every non-fixture invocation for the whole batch, so a treatment run's leftovers were
+// sitting there for later control runs to read, and assertIsolated's FORBIDDEN check
+// (run once, before the first job) could not see anything created afterwards.
+//
+// concurrency 1 is load-bearing. It forces all 8 runs into a strict sequence, so under
+// the old shared-directory code runs 2..8 deterministically observe run 1's marker --
+// no race, no flake, the mutation test fails every time rather than most of the time.
+test("each run gets its own sandbox: nothing a run writes is visible to a later run", async () => {
+  const dir = env({ default: { outs: ["a reply"] } });
+  const raw = join(dir, "raw");
+  process.env.NULLBENCH_STUB_ECHO_CWD = "1";
+  process.env.NULLBENCH_STUB_WRITE_CWD_FILE = "leaked-by-an-earlier-run.txt";
+  let records;
+  try {
+    ({ records } = await runSuite({
+      registration, requested, skillFile: join(dir, "SKILL.md"), rawDir: raw, concurrency: 1,
+    }));
+  } finally {
+    delete process.env.NULLBENCH_STUB_ECHO_CWD;
+    delete process.env.NULLBENCH_STUB_WRITE_CWD_FILE;
+  }
+  assert.equal(records.length, 8);
+  const files = readdirSync(raw);
+  assert.equal(files.length, 8);
+  for (const f of files) {
+    const text = readFileSync(join(raw, f), "utf8");
+    // Assert the mechanism reported at all, so a silently-disabled echo cannot make the
+    // doesNotMatch below pass vacuously.
+    assert.match(text, /<cwd-files>/, `${f} did not report its cwd contents`);
+    assert.doesNotMatch(text, /leaked-by-an-earlier-run\.txt/,
+      `${f} saw a file written by an earlier run -- the sandbox is being reused across runs`);
+    assert.match(text, /<cwd-files><\/cwd-files>/,
+      `${f} started in a non-empty sandbox; every non-fixture run must get a fresh, empty directory`);
+  }
+  clean(dir);
+});
+
+// Only the suite-level probe directory's own prefix. "nullbench-fx-" fixture sandboxes
+// and "nullbench-run-" per-invocation sandboxes are separate, already-cleaned-up
+// lifecycles (makeCwd creates them, the worker's `finally` removes them, and makeCwd
+// removes them itself when its own isolation check fails) and must not be counted here,
+// or a real leak of the probe directory could hide behind per-run sandboxes correctly
+// appearing and disappearing. The negative lookahead was widened for "run-" when
+// per-run sandboxes were introduced; this test's subject is still only the probe.
 function countSharedSandboxes() {
-  return readdirSync(tmpdir()).filter((f) => /^nullbench-(?!fx-)/.test(f)).length;
+  return readdirSync(tmpdir()).filter((f) => /^nullbench-(?!fx-|run-)/.test(f)).length;
 }
 
 test("a rejecting runSuite call does not leak the shared sandbox on disk", async () => {

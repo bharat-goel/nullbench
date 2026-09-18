@@ -10,9 +10,20 @@ export function binaryPath() {
   return process.env.NULLBENCH_CLAUDE_BIN || "claude";
 }
 
-export function invoke({ prompt, systemPromptFile = null, cwd, model, streamJson = false }) {
+// Tools the SUBJECT is denied. Nothing in the protocol requires the subject to mutate
+// its cwd: every verifier (any, ordered, none, judge) reads stdout and nothing else. A
+// subject that can write leaves artifacts behind, and an artifact is only ever a
+// contamination vector -- it can never improve a measurement. Belt to the per-run
+// sandbox's braces in src/runner.mjs.
+export const SUBJECT_DISALLOWED_TOOLS = ["Write", "Edit", "Bash"];
+
+export function invoke({ prompt, systemPromptFile = null, cwd, model, streamJson = false, disallowedTools = null }) {
   const args = ["-p", "--setting-sources", "project", "--model", model];
   if (streamJson) args.push("--output-format", "stream-json", "--verbose");
+  // Comma-separated, one argv entry, not `--disallowedTools Write Edit Bash`. The flag
+  // is variadic, and the prompt is pushed last as a positional -- a space-separated
+  // list would let the flag swallow the prompt itself. The CLI accepts either form.
+  if (disallowedTools?.length) args.push("--disallowedTools", disallowedTools.join(","));
   if (systemPromptFile) args.push("--append-system-prompt-file", systemPromptFile);
   args.push(prompt);
 

@@ -10,6 +10,13 @@
 // same regardless of cwd, so without this a fixture copy could silently fail to land
 // and every test would still pass against an empty sandbox. Default (env unset)
 // behaviour is byte-identical to before this existed: no extra line, no readdirSync.
+//
+// NULLBENCH_STUB_WRITE_CWD_FILE: when set to a filename, the stub writes that file into
+// its own process.cwd() -- a stand-in for a real subject run creating an artifact. It
+// is written AFTER the cwd listing above is computed, so a run never observes its own
+// marker; only a LATER run sharing the same directory can see it. That is exactly the
+// cross-run visibility being pinned in test/runner.test.mjs. Default (env unset)
+// behaviour is byte-identical to before this existed: nothing is written.
 
 import {
   readFileSync,
@@ -21,6 +28,7 @@ import {
   unlinkSync,
   readdirSync,
 } from "node:fs";
+import { join } from "node:path";
 
 const plan = JSON.parse(readFileSync(process.env.NULLBENCH_STUB_PLAN, "utf8"));
 const statePath = process.env.NULLBENCH_STUB_STATE;
@@ -109,6 +117,10 @@ const outs = rule.outs ?? [""];
 let output = outs[i % outs.length];
 if (process.env.NULLBENCH_STUB_ECHO_CWD) {
   output += `\n<cwd-files>${readdirSync(process.cwd()).sort().join(",")}</cwd-files>`;
+}
+// After the listing, deliberately -- see the header note.
+if (process.env.NULLBENCH_STUB_WRITE_CWD_FILE) {
+  writeFileSync(join(process.cwd(), process.env.NULLBENCH_STUB_WRITE_CWD_FILE), "written by a stub run\n");
 }
 process.stdout.write(output);
 process.exit(rule.code ?? 0);
