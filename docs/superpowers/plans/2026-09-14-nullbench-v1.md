@@ -10,6 +10,16 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-14-nullbench-design.md` — read it before Task 1. The plan implements it; where the plan and spec disagree, the spec is wrong and should be amended by a commit that says so.
 
+## Execution Order
+
+Dependency order, not numeric order. **Task 12 (`src/leakage.mjs`) executes after Task 9
+and before Task 10**, because Tasks 10 and 11 both import it:
+
+`1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 12 → 10 → 11 → 13 → 14 → 15 → 16`
+
+Task numbers are stable; only the dispatch sequence differs. Every other task depends
+only on tasks numbered below it.
+
 ## Global Constraints
 
 - **Zero dependencies.** `package.json` must have no `dependencies` and no `devDependencies`. A task that needs a library is a task that needs redesigning.
@@ -2180,6 +2190,7 @@ import { runCanaries, loadCanaries } from "./judge.mjs";
 import { classify } from "./classify.mjs";
 import { aggregate, renderReport } from "./report.mjs";
 import { appendEntry } from "./ledger.mjs";
+import { assertIsolated, distinctiveTerms, scanControlLeakage } from "./leakage.mjs";
 
 function intArg(raw, flag) {
   const v = Number(raw);
@@ -2551,50 +2562,24 @@ export function scanControlLeakage({ rawDir, terms, threshold = 0.5 }) {
 Run: `node --test test/leakage.test.mjs`
 Expected: PASS, 6 tests.
 
-- [ ] **Step 5: Wire both mechanisms into `src/cli.mjs`**
+- [ ] **Step 5: Confirm the consumers already wire it in**
 
-Add the import beside the others:
+**This task runs BEFORE Tasks 10 and 11** (see Execution Order at the top of this plan).
+Both of those tasks' source blocks are already written against this module, so there is
+nothing to modify here — only to confirm the contract they expect:
 
-```js
-import { assertIsolated, distinctiveTerms, scanControlLeakage } from "./leakage.mjs";
-```
+- `src/runner.mjs` (Task 10) imports `assertIsolated` and calls it inside `makeCwd` for
+  every fixture sandbox, and in `runSuite` for the shared sandbox.
+- `src/cli.mjs` (Task 11) imports all three functions: `assertIsolated` for the canary
+  sandbox, and `distinctiveTerms` + `scanControlLeakage` inside the `try` block whose
+  `finally` appends the ledger entry.
 
-Add an isolation check to `src/runner.mjs` immediately after the shared sandbox is
-created, so no run can start in a contaminated directory:
+A leakage suspicion is passed to `renderReport` as a **warning**, not a reason, and does
+**not** change the run's class — the heuristic is not strong enough to overturn a
+registration. It is surfaced permanently in the ledger.
 
-```js
-// in runSuite, right after: const shared = mkdtempSync(join(tmpdir(), "nullbench-"));
-const iso = assertIsolated(shared, fixtureRoot);
-if (!iso.ok) {
-  rmSync(shared, { recursive: true, force: true });
-  throw new Error(`sandbox is not isolated:\n  - ${iso.problems.join("\n  - ")}`);
-}
-```
-
-with `import { assertIsolated } from "./leakage.mjs";` added to `runner.mjs`.
-
-Then in `main()`, after `runSuite` returns and before `classify`, run the scan and fold
-a suspicion into the reasons so it reaches the report and the ledger:
-
-```js
-const terms = distinctiveTerms(readFileSync(skillFile, "utf8"));
-const leak = scanControlLeakage({ rawDir: join(outDir, "raw"), terms });
-```
-
-and after `classify(...)`, before rendering:
-
-```js
-if (leak.suspicious) {
-  reasons.push(
-    `possible control-arm leakage: ${leak.hits}/${leak.checked} control replies contain ` +
-    `the skill's distinctive vocabulary. This is a weak heuristic, not proof — see FAILURES.md entry 5.`
-  );
-}
-```
-
-Note that `reasons` comes from `classify` and is a plain array, so pushing is safe; a
-suspicion does **not** change the class on its own, because the heuristic is not strong
-enough to overturn a registration. It is surfaced, permanently, in the ledger.
+Nothing to do in this step but read those two contracts so the exported signatures
+match. If they do not, this module is wrong, not the consumers.
 
 - [ ] **Step 6: Run the whole suite**
 

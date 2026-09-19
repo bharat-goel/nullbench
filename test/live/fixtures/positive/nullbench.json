@@ -1,0 +1,21 @@
+{
+  "model": "sonnet",
+  "judge_model": "sonnet",
+  "reps": 10,
+  "tasks": [
+    {
+      "id": "shape",
+      "file": "tasks/shape.json",
+      "sha256": "ee7386ffe15ee67181a92d7b3aa9a6cb411dd247afd23d4eea8d9a50c5027e65",
+      "kind": "signal",
+      "predict": "helps"
+    },
+    {
+      "id": "factual-accuracy",
+      "file": "tasks/factual-accuracy.json",
+      "sha256": "5ab4051c677955ac83269a0591db9122e457b4e50216eed70c0a4fb4fcb4bb90",
+      "kind": "harm",
+      "predict": "no-effect"
+    }
+  ]
+}

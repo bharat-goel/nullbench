@@ -1,0 +1,12 @@
+{
+  "id": "factual-accuracy",
+  "skill": "three-bullets",
+  "kind": "harm",
+  "prompt": "What is the capital of France?",
+  "rationale": "A factual question with a single unambiguous correct answer. The three-bullets skill is expected to change the shape of the reply (forcing it into bullet form) but must not make the reply factually wrong. Registered harm task -- required so this registration has a negative control alongside its signal task.",
+  "verify": {
+    "type": "any",
+    "patterns": ["paris"],
+    "maxWords": 60
+  }
+}

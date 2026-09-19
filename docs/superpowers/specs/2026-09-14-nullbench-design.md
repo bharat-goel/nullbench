@@ -109,11 +109,33 @@ Rules:
 
 ### 5.2 Registration hash
 
-On run, the runner computes `H = sha256(canonical(nullbench.json) || sha256(task_1) ||
-... || sha256(task_n))` over tasks sorted by `id`, and stamps `H` into the report and
-the ledger. Canonicalization follows RFC 8785 (sorted keys, no insignificant
-whitespace) and is defined in `PROTOCOL.md` so the hash is reproducible across
-formatters.
+On run, the runner computes a hash over a **canonical projection** of the registration
+and stamps it into the report and the ledger:
+
+```
+H = sha256(canonical({
+      model, judge_model, reps,
+      tasks: [ { id, kind, predict, sha256: <hash of the task file as found on disk> } ]
+    }))
+```
+
+with `tasks` sorted by `id`. Canonicalization follows RFC 8785 (sorted keys, no
+insignificant whitespace) and is defined in `PROTOCOL.md` so the hash is reproducible
+across formatters.
+
+> **Amended 2026-09-17** (implementation diverged; the implementation is authoritative
+> here). This section previously specified
+> `H = sha256(canonical(nullbench.json) || sha256(task_1) || ... || sha256(task_n))` —
+> a hash over the whole registration file plus the task bytes. Task 3 implemented the
+> projection above instead, and the projection is the better design for two reasons.
+> First, it **excludes `file` paths**, so moving a task file or reorganizing directories
+> does not change the identity of the experiment; only the task's content, kind,
+> prediction and id do. Second, it hashes the **actual** file bytes rather than the
+> `sha256` value declared in `nullbench.json`, so `H` names what really ran rather than
+> what the registration claimed ran — a tampered task file changes `H` even if someone
+> also updated the declared hash to match. A reformatted registration hashes
+> identically; a changed task never does. Declared-vs-actual disagreement is reported
+> separately, as `HASH_MISMATCH` drift, which is what demotes a run to EXPLORATORY.
 
 ### 5.3 Report classes
 
@@ -170,9 +192,20 @@ reader can see the runs that did not make the README.
 - Per-arm pass rates carry a Wilson score interval at 95%.
 - The delta carries a Newcombe interval. The runner never emits a bare point estimate;
   every delta printed anywhere carries its interval.
-- A cell with fewer than `max(3, ceil(reps * 0.8))` graded runs reports `n/a` and voids
-  the batch. Runs that produced no reply are excluded from the denominator, never
-  counted as failed answers.
+- A cell with fewer than `max(3, ceil(reps * 0.8))` graded runs voids the batch, and a
+  voided batch reports no per-task figures at all. Runs that produced no reply are
+  excluded from the denominator, never counted as failed answers.
+
+  > **Amended 2026-09-17** (internal contradiction resolved in favour of §5.3). This
+  > bullet previously said a thin cell "reports `n/a`", which contradicts §5.3's rule
+  > that a VOID run reports no per-task figures and no average. The implementation
+  > follows §5.3: `classify` returns VOID before any aggregation, and `renderReport`
+  > returns immediately after the header and the reasons list, before either table is
+  > rendered. There is no `n/a` cell anywhere in the output, because there is no table
+  > to put one in. What a reader needs in order to see what died is still printed: the
+  > **reasons list** names every thin cell as `task "<id>" <arm>: <k> graded runs, <n>
+  > required`, and the same reasons are written into the **ledger entry** for that run.
+  > A VOID run still appends to the ledger and still exits non-zero.
 - A signal task whose delta interval spans zero is labeled **non-discriminating** and
   excluded from the average, with the exclusion stated in the report.
 - An average over fewer than two discriminating signal tasks is suppressed. `+26.7pp`
@@ -251,7 +284,11 @@ the inside, the real numbers from the `cobra` runs, and nullbench's mitigation m
 12. **Ambiguous cases scored in the skill's favour.** The Datadog trigger prompt is
     genuinely arguable — setting an alert threshold is defining a measure — and was
     counted as a false fire anyway. Scoring ambiguity favourably is how the original
-    inflated numbers happened. → **mitigated**: prereg forces the call before the run.
+    inflated numbers happened. → **open**: prereg freezes the rubric (its text is in the
+    task file, hashed into H, so an edit between runs forces EXPLORATORY) but cannot
+    supply the judgement that decides an arguable reply. Amended from **mitigated**
+    during implementation: the original status counted freezing the criterion as
+    resolving the failure, which is the same conflation the entry describes.
 13. **The file drawer.** Three of four batches were discarded to produce the published
     table. → **caught**: the ledger.
 
