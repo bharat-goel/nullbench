@@ -22,7 +22,7 @@ one thing here, read that.** It is useful whether or not you ever install this.
 
 ---
 
-## Status: run, with one half of the bracket still unverified
+## Status: run on real models; the bracket has only seen a local one
 
 Read this before you read anything else as a claim.
 
@@ -142,7 +142,7 @@ ledger format and the interval methods: `PROTOCOL.md`.
 Verify without spending anything:
 
 ```bash
-npm test                             # 126 tests, no network, no API key
+npm test                             # 138 tests, no network, no API key
 node bin/nullbench.mjs examples/cobra --dry-run
 ```
 

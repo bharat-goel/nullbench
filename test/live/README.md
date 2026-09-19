@@ -93,19 +93,26 @@ Either test failing is informative in the opposite direction:
 - Task 16 (`PROTOCOL.md`) cannot yet pin a date, model, or interval for this bracket,
   because none exist.
 
-Run `npm run verify:live` when API access is available, then update this file and
-`PROTOCOL.md` with the actual date, model, and both intervals -- not before.
+Both intervals and the date are recorded above and in `PROTOCOL.md`'s Placebo status
+block. Re-run `npm run verify:live` after any change to the runner, the verifiers or the
+statistics, and update both.
 
-## Unverified against the real CLI
+## A note on `--disallowedTools`
 
-Subject invocations pass `--disallowedTools Write,Edit,Bash`, and nothing here has ever
-confirmed the real `claude` CLI accepts that flag or honours it. Every test in `npm test`
-runs against the stub with no network, so they pin the argv shape nullbench constructs and
-nothing about how the CLI reads it.
+Subject invocations **do not** pass it. An earlier version did, on the reasoning that
+nothing in the protocol needs the subject to write to its cwd. That reasoning was wrong:
+cobra's `ic-agent-under-pressure` hands the model a real failing test suite and grades
+whether it finds the bug, and cobra's published numbers were measured with no tool
+restriction — so restricting here would both change the task and make the worked example
+non-comparable. Contamination is closed by the per-run sandbox instead, which is created,
+isolation-checked and destroyed around every single call.
 
-It should fail loudly rather than silently — a rejected flag means every subject call exits
-non-zero, which is a 100%-dead batch and a VOID report, not a quiet wrong number. Confirm it
-on the first live run anyway.
+The plumbing remains in `src/claude.mjs` for a caller who wants it, and it is now correct:
+`--disallowedTools=a,b,c` as one token. The separate-entry form was verified against the
+real CLI the hard way — the flag is variadic, it swallowed the trailing positional prompt,
+every word of the prompt became a bogus deny rule, and 97 of 100 runs produced no reply.
+The batch came back VOID rather than reporting a number, which is the system working, but
+the run was wasted.
 
 ## Running the bracket against a local model
 

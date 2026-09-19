@@ -6,7 +6,7 @@
   "license": "MIT",
   "engines": { "node": ">=22" },
   "bin": { "nullbench": "./bin/nullbench.mjs" },
-  "files": ["bin", "src", "PROTOCOL.md", "FAILURES.md", "ATTRIBUTION.md", "LICENSE"],
+  "files": ["bin", "src", "tools/local-claude.mjs", "PROTOCOL.md", "FAILURES.md", "ATTRIBUTION.md", "LICENSE"],
   "scripts": {
     "test": "node --test 'test/*.test.mjs' 'test/e2e/*.test.mjs'",
     "verify:live": "node --test 'test/live/*.test.mjs'"
