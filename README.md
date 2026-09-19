@@ -1,87 +1,91 @@
 # nullbench
 
-**A skill I published came with an evaluation. The evaluation was wrong.**
+**Pre-registration for skill evaluations.** Declare your tasks, reps and per-task
+predictions before you run; get a report that states plainly whether it measured what you
+registered — and withholds the numbers it cannot stand behind.
 
-It reported **+40.0pp**. Re-measurement under a blind rubric judge put it at **+26.7pp**,
-and the reason was not a typo. The largest single contributor to the original figure was a
-task where *both arms already passed* and the treatment arm was scoring on the word
-*weaken* — a word that appears verbatim in the skill's own `SKILL.md`. Nine of ten control
-replies found the bug and proposed the right fix, and all nine were marked wrong for not
-using the magic word. The verifier was measuring diction.
+Here is the tool refusing to print its own author's headline figure:
 
-The corrected `+26.7pp` is also not a good number. It is a mean over three signal tasks:
-one with a large real effect, and two pinned at 100% in both arms with no headroom to show
-anything. Four full batches were run to produce that table. Three were discarded.
+```
+# nullbench report — CONFIRMATORY
+
+| Task                      | Predicted | Control      | Treatment    | Delta   | 95% CI             |                    |
+|---------------------------|-----------|--------------|--------------|---------|--------------------|--------------------|
+| `ic-agent-under-pressure` | helps     |  90% (9/10)  | 100% (10/10) | +10.0pp | [-18.9pp, +40.4pp] | non-discriminating |
+| `ic-clock-exclusion`      | helps     | 100% (10/10) | 100% (10/10) |  +0.0pp | [-27.8pp, +27.8pp] | non-discriminating |
+| `ic-smoke-denominator`    | helps     |  10% (1/10)  |  90% (9/10)  | +80.0pp | [+37.0pp, +91.6pp] |                    |
+
+Average across signal tasks: suppressed — 1 of 3 signal tasks discriminate;
+an average over fewer than two is not a finding.
+```
+
+The published figure for that suite is **+26.7pp**. It is the mean of those three deltas,
+two of which come from tasks pinned at ceiling in both arms. nullbench declines to compute
+it. Two of the three `helps` predictions were scored **MISS**, because they were committed
+before the run and turned out to be wrong.
+
+## Quick start
+
+Node >= 22, zero dependencies. Not on npm yet — clone and run `node bin/nullbench.mjs`.
+
+```bash
+node bin/nullbench.mjs ./my-suite --dry-run   # preflight: costs nothing, writes nothing
+node bin/nullbench.mjs ./my-suite             # preflight, confirm, run
+```
+
+A suite is a `SKILL.md`, a `tasks/` directory, and a registration naming every task with
+its content hash, its kind, and a prediction:
+
+```json
+{
+  "model": "sonnet", "judge_model": "sonnet", "reps": 10,
+  "tasks": [
+    { "id": "my-task", "file": "tasks/my-task.json", "sha256": "…",
+      "kind": "signal", "predict": "helps" },
+    { "id": "my-control", "file": "tasks/my-control.json", "sha256": "…",
+      "kind": "harm", "predict": "no-effect" }
+  ]
+}
+```
+
+At least one `harm` task is required for a CONFIRMATORY stamp. Without a negative control,
+the cheapest way for any skill to pass its own evaluation is to fire on everything.
+
+A worked example is in [`examples/cobra/`](examples/cobra/). Full field reference,
+canonicalization, hash construction and the interval methods: [`PROTOCOL.md`](PROTOCOL.md).
+
+## Why this exists
+
+A skill I published came with an evaluation. The evaluation was wrong.
+
+It reported **+40.0pp**. Re-measurement under a blind rubric judge put it at +26.7pp, and
+the reason was not a typo: the largest contributor was a task where *both arms already
+passed* and the treatment arm was scoring on the word *weaken* — a word that appears
+verbatim in the skill's own `SKILL.md`. Nine of ten control replies found the bug and
+proposed the right fix, and all nine were marked wrong for not using the magic word. The
+verifier was measuring diction.
+
+Four full batches were run to produce that table. Three were discarded.
 
 Every one of those mistakes was made by someone actively trying to measure honestly, with
-the verifier code in front of him. That is the problem worth solving. The failure modes are
+the verifier code in front of him. That is the problem worth solving: the failure modes are
 not visible from the inside, and the tooling does nothing to surface them.
 
-`FAILURES.md` is the catalog of thirteen of them, with what each one cost. **If you read
-one thing here, read that.** It is useful whether or not you ever install this.
+**[`FAILURES.md`](FAILURES.md) is the catalog of thirteen of them, with what each one cost.
+If you read one thing here, read that** — it is useful whether or not you ever install this.
+Three of the thirteen are marked **open**, because they are.
 
----
-
-## Status: run on real models; the bracket has only seen a local one
-
-Read this before you read anything else as a claim.
-
-- The protocol logic is tested end to end: **138 offline tests**, no network, no API key,
-  driven by a stub `claude` binary that replays recorded output.
-- **The worked example has been run**, on Sonnet, 2026-09-18: 173 invocations, judge
-  canaries 13/13, report CONFIRMATORY. The table is in `examples/cobra/README.md` and the
-  run is in `examples/cobra/LEDGER.md` alongside the three attempts that failed first.
-- **Both arms of the live bracket have been run** — on a local `gemma-4-12b-qat`, not on
-  a hosted model. An irrelevant skill produced `+0.0pp [-27.8pp, +27.8pp]`, spanning zero;
-  a mechanically detectable one produced `+100.0pp [+60.7pp, +100.0pp]`, excluding it.
-  Zero dead runs in either. On that model the runner neither manufactures effects nor
-  reports null for everything — which is the whole point of running both, since a harness
-  that always returns null passes the placebo arm perfectly.
-  `npm run verify:live` passes both arms in one invocation, 2/2, and the intervals
-  reproduce exactly across separate runs.
-- **That is one 12B local model. Neither arm has run against a hosted model.** See the
-  Placebo status block in `PROTOCOL.md` for exactly what was and was not established.
-
-The prediction this README carried before the run, stated so it could be wrong: two of the
-three signal tasks would come back non-discriminating, leaving one, which is below the
-threshold of two, which would make the suite average **suppressed** rather than printed.
-
-That is what happened. `ic-smoke-denominator` came back `+80.0pp [+37.0pp, +91.6pp]`; the
-other two signal tasks sat at ceiling in both arms and were flagged non-discriminating; the
-average was withheld. The protocol's first act was to decline to print its own author's
-headline figure.
-
-Two of the three `helps` predictions were scored **MISS**, because they were committed
-before the run and were wrong. That is the point of committing them.
-
-A project whose thesis is that published evaluations overclaim does not get to overclaim.
-
----
-
-## What it is
-
-nullbench is three things, in order of how much they matter:
-
-1. **A catalog** (`FAILURES.md`) of how skill evaluations lie, with real numbers from a
-   real evaluation that got them wrong.
-2. **A protocol** (`PROTOCOL.md`): declare the tasks, the reps, the models and a
-   per-task *prediction* before running; hash the registration; stamp that hash on every
-   report and every ledger entry.
-3. **A runner** that enforces the protocol, because the enforcement points — hashing,
-   classing, the ledger append, printing intervals — are exactly the steps a person under
-   deadline pressure skips. A protocol that depends on discipline measures discipline.
-
-### The three report classes
+## The three report classes
 
 | Class | When | What prints | Exit |
 |---|---|---|---|
 | **CONFIRMATORY** | what ran is exactly what was registered, and enough of it graded | everything | 0 |
 | **EXPLORATORY** | the registration did not hold — a task changed, `--task` filtered, reps or model overridden, canaries misgraded, no harm task | per-task figures, each failed condition named; **average suppressed** | 0 |
-| **VOID** | a cell fell below `max(3, ceil(reps * 0.8))` graded runs | nothing per-task, no average; the thin cells are named in the ledger | **1** |
+| **VOID** | a cell fell below `max(3, ceil(reps × 0.8))` graded runs | nothing per-task, no average; thin cells named in the ledger | **1** |
 
 Exploratory is not a failure state. Finding a task that discriminates takes iteration, and
-the protocol does not prevent iteration — it prevents an iterated result from being
-reported as a confirmed one.
+the protocol does not prevent iteration — it prevents an iterated result from being reported
+as a confirmed one.
 
 A CONFIRMATORY stamp does not imply a printed average. Suppression is orthogonal: the
 average is withheld whenever fewer than two signal tasks discriminate, however clean the
@@ -94,90 +98,53 @@ registration was.
 - An average with an interval — a mean of per-task deltas has no defined one, so it prints
   with an explicit `no interval` marker or not at all.
 - A number from a run that isn't in `LEDGER.md`. Every run appends, including the voided
-  ones and the flat ones, from a `finally` block with no path around it.
+  and the flat ones, from a `finally` block with no path around it.
+- A verifier pattern lifted verbatim out of your own `SKILL.md`. Caught at preflight,
+  before you spend anything.
 
----
+## What has actually been run
 
-## Install and use
+Claims here are load-bearing, so they are itemised.
 
-Node >= 22. No dependencies, ESM only. Not published to npm yet — clone the repository and
-run `node bin/nullbench.mjs <suite-dir>`; the examples below use `nullbench` for brevity.
+| | Status |
+|---|---|
+| Protocol logic | **138 offline tests**, no network, no API key, stub `claude` binary |
+| Worked example (`examples/cobra/`) | **run on Sonnet**, 2026-09-18 — 173 invocations, canaries 13/13, CONFIRMATORY |
+| Live bracket (`npm run verify:live`) | **2/2 passed** on a local `gemma-4-12b-qat` |
 
-Write a `nullbench.json` and a `tasks/` directory beside your `SKILL.md`:
+The bracket is the guarantee that the runner separates signal from noise. Its placebo arm
+(an irrelevant skill) returned `+0.0pp [-27.8pp, +27.8pp]`, spanning zero. Its
+known-positive arm (a mechanically detectable one) returned `+100.0pp [+60.7pp, +100.0pp]`,
+excluding it. Both arms are needed: a harness that always reports null passes the placebo
+arm perfectly.
 
-```json
-{
-  "model": "sonnet",
-  "judge_model": "sonnet",
-  "reps": 10,
-  "tasks": [
-    { "id": "my-task", "file": "tasks/my-task.json",
-      "sha256": "<sha256 of that file's bytes>",
-      "kind": "signal", "predict": "helps" },
-    { "id": "my-negative-control", "file": "tasks/my-negative-control.json",
-      "sha256": "<...>", "kind": "harm", "predict": "no-effect" }
-  ]
-}
-```
-
-At least one `harm` task is required for a CONFIRMATORY stamp. Without a negative control,
-the cheapest way for any skill to satisfy its own evaluation is to fire on everything.
-
-```bash
-nullbench .                          # preflight, confirm, run
-nullbench . --dry-run                # preflight only: costs nothing, writes nothing
-nullbench . --yes                    # skip the confirmation prompt
-nullbench . --cost-per-call 0.015    # the built-in price is a placeholder, not a quote
-nullbench . --task my-task           # runs one task — and stamps EXPLORATORY, by design
-nullbench . --skill ../other/SKILL.md  # test a different skill — also EXPLORATORY, by design
-nullbench . --concurrency 1          # one call at a time; required for a local model
-```
-
-`--reps`, `--model` and `--judge-model` override the registered values the same way, and
-each one is named in the report as a reason the run departed from what was registered.
-
-Full field reference, canonicalization rules, hash construction, exact class conditions,
-ledger format and the interval methods: `PROTOCOL.md`.
-
-Verify without spending anything:
-
-```bash
-npm test                             # 138 tests, no network, no API key
-node bin/nullbench.mjs examples/cobra --dry-run
-```
-
-`npm run verify:live` is the live bracket and is deliberately *not* part of `npm test`. It
-costs 80 real invocations.
-
----
+**The bracket has only run against a 12B local model.** That establishes the machinery
+works there. It says nothing about a hosted model.
 
 ## What nullbench does not do
 
-**It does not help you write a task that discriminates, and that is the hard part.** A
-task where both arms already score 100% tells you nothing about a skill, and nullbench
-cannot write you a better one. What it does is make the non-discriminating task *visible* —
-labeled in the table, excluded from the mean, and capable of suppressing the mean
-entirely — instead of letting it be quietly absorbed into an average. Naming the problem is
-not solving it.
+**It does not help you write a task that discriminates, and that is the hard part.** A task
+where both arms already score 100% tells you nothing about a skill, and nullbench cannot
+write you a better one. What it does is make the non-discriminating task *visible* — labeled
+in the table, excluded from the mean, and capable of suppressing the mean entirely — instead
+of letting it be quietly absorbed. Naming the problem is not solving it.
 
 It also does not:
 
-- **evaluate triggering** — whether the skill fires at all. That is v1 scope, deferred to
-  v2. A skill can give excellent advice and never activate; the two fail separately and
-  must be measured separately.
-- **fix a bad rubric.** The judge removes vocabulary-matching as the default failure. A
-  rubric that rewards the skill's own framing still defeats it.
-- **detect a blind spot shared by the judge and the subject.** Same model family, so a
-  mistake both would make cannot appear in a hand-written canary. Disclosed in every
-  report that used a judge. `FAILURES.md` entry 3, marked open.
-- **prove isolation.** The directory checks are deterministic; the leakage scan over
-  control replies is a heuristic that raises a question and never answers one.
-- **enforce replication.** One batch can be stamped CONFIRMATORY, and cobra's own results
-  say one batch at n=10 is not enough. `FAILURES.md` entry 9, marked open.
-- **work with anything but the `claude` CLI.** Not a general eval framework, not a
-  leaderboard, not a hosted service, and never a single score for a suite.
-
----
+- **evaluate triggering** — whether the skill fires at all. Deferred to v2. A skill can give
+  excellent advice and never activate; the two fail separately and must be measured separately.
+- **fix a bad rubric.** The judge removes vocabulary-matching as the default failure. A rubric
+  that rewards the skill's own framing still defeats it.
+- **detect a blind spot shared by the judge and the subject.** Same model family, so a mistake
+  both would make cannot appear in a hand-written canary. Disclosed in every judged report.
+  `FAILURES.md` entry 3, open.
+- **prove isolation.** The directory checks are deterministic; the leakage scan over control
+  replies is a heuristic that raises a question and never answers one.
+- **enforce replication.** One batch can be stamped CONFIRMATORY, and cobra's own results say
+  one batch at n=10 is not enough. `FAILURES.md` entry 9, open.
+- **work with anything but the `claude` CLI** — though `tools/local-claude.mjs` adapts any
+  OpenAI-compatible endpoint, which is how the bracket was run. Not a general eval framework,
+  not a leaderboard, not a hosted service, and never a single score for a suite.
 
 ## Repository
 
@@ -187,19 +154,21 @@ PROTOCOL.md        the normative spec, and the placebo status block
 ATTRIBUTION.md     nothing here is an original idea; this says whose it is
 src/               prereg, runner, verify, judge, stats, ledger, report, cli
 test/              offline suite (stubbed `claude`, zero spend)
-test/live/         the placebo / known-positive bracket — never run
-examples/cobra/    the worked example — registered and verified offline, never run
+test/live/         the placebo / known-positive bracket — both arms passing
+examples/cobra/    the worked example — run on Sonnet, results in its README
+tools/             the fake `claude` for tests, and a local-model adapter
 ```
 
 ## Attribution
 
-The paired design is **SkillsBench**'s (arXiv 2602.12670). The confirmatory/exploratory
-split and the file-drawer framing are a straight port of **clinical and social-science
-pre-registration** (OSF, AsPredicted) into a new domain. The judge prompt, the
-negation-aware verifier and every number in `FAILURES.md` come from **`cobra-skill/eval`**.
-The intervals are **Wilson (1927)** and **Newcombe (1998)**. Details, including what each
-adaptation changed, are in `ATTRIBUTION.md`.
+The paired design is **SkillsBench**'s (arXiv [2602.12670](https://arxiv.org/abs/2602.12670)).
+The confirmatory/exploratory split and the file-drawer framing are a straight port of
+**clinical and social-science pre-registration** (OSF, AsPredicted) into a new domain. The
+judge prompt, the negation-aware verifier and every historical number in `FAILURES.md` come
+from **[`cobra-skill/eval`](https://github.com/bharat-goel/cobra-skill)**. The intervals are
+**Wilson (1927)** and **Newcombe (1998)**. What each adaptation changed is in
+[`ATTRIBUTION.md`](ATTRIBUTION.md).
 
 ## License
 
-MIT. See `LICENSE`.
+MIT. See [`LICENSE`](LICENSE).
