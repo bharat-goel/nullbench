@@ -76,11 +76,13 @@ Sloppy verifiers distort in both directions, which is why "the number came out i
 direction I expected" is not evidence the verifier works.
 
 > **Correction.** `cobra-skill/eval/RESULTS.md` line 25 gives this cell as 10% → 90%,
-> which is +80.0pp. Its prose at line 55 says "+90.0pp against +50.0pp". +80.0pp is the
-> correct figure and the prose is the error; it propagated into this project's design
-> document before being caught here. The defect in cobra's published document has not
-> been fixed from this repository; it is raised in
-> [cobra-skill#4](https://github.com/bharat-goel/cobra-skill/pull/4).
+> which is +80.0pp. Its prose at line 55 said "+90.0pp against +50.0pp". +80.0pp is the
+> correct figure and the prose was the error; it propagated into this project's design
+> document before being caught here. The discrepancy was first raised, undocumented, in
+> [cobra-skill#4](https://github.com/bharat-goel/cobra-skill/pull/4) — which added a
+> comparison table to `eval/README.md` but never touched the actual error in
+> `RESULTS.md` — and was fixed directly in
+> [cobra-skill#5](https://github.com/bharat-goel/cobra-skill/pull/5).
 >
 > **Independently reproduced.** nullbench's own run of this suite (Sonnet, 2026-09-18,
 > `examples/cobra/`) measured the same cell at **10% → 90%, +80.0pp [+37.0pp, +91.6pp]**
