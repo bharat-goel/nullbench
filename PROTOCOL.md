@@ -48,13 +48,14 @@ irrelevant to the tasks it is measured against; the runner must report an interv
 spans zero. Its known-positive arm is a skill that mechanically changes output shape
 ("answer in exactly three bullets"), deterministically verified; the runner must report an
 interval strictly above zero. One without the other proves nothing — a harness that always
-reports null passes the placebo test perfectly, which is exactly what the placebo arm alone
-now demonstrates and exactly why it is not enough. Until the known-positive arm has also
-run and passed, **the claim that this runner can tell a real effect from noise rests on the
-cobra worked example** — which did detect a large effect (`+80.0pp [+37.0pp, +91.6pp]`) with
-a matched control, and is real evidence, but is not a purpose-built positive control with a
-mechanically guaranteed answer. The protocol logic is tested end to
-end against a stub (118 offline tests, no network, no API key); the stub is not a model.
+reports null passes the placebo test perfectly, which is why the placebo arm alone was
+never enough. Both arms have now run and passed (above), so the claim that this runner can
+tell a real effect from noise rests on the bracket itself, not only on the cobra worked
+example — which remains separate evidence: it did detect a large effect
+(`+80.0pp [+37.0pp, +91.6pp]`) with a matched control, but is not a purpose-built positive
+control with a mechanically guaranteed answer. The protocol logic is additionally tested
+end to end against a stub (138 offline tests, no network, no API key); the stub is not a
+model.
 
 **What it costs.** 80 CLI invocations — 40 per fixture, being 2 tasks x 2 arms x 10 reps,
 with no judge calls because both fixtures use deterministic verifiers. This figure is

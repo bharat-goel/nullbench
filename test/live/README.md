@@ -84,14 +84,7 @@ Either test failing is informative in the opposite direction:
   everything and never get caught. The placebo test alone cannot detect this failure
   mode; that is exactly why both tests exist.
 
-## What has NOT happened
-
-- `npm run verify:live` has not been executed.
-- No `results/` directory exists under either fixture.
-- No pass rate, delta, or confidence interval for either fixture has been measured,
-  recorded, quoted, or estimated anywhere in this repository.
-- Task 16 (`PROTOCOL.md`) cannot yet pin a date, model, or interval for this bracket,
-  because none exist.
+## Keeping this current
 
 Both intervals and the date are recorded above and in `PROTOCOL.md`'s Placebo status
 block. Re-run `npm run verify:live` after any change to the runner, the verifiers or the

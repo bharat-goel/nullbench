@@ -352,6 +352,7 @@ not the grading criterion). They have disclosure behind them, not mechanism. Ent
 and 6 are partial — a heuristic and a v2 promise respectively.
 
 A reader deciding whether to trust a nullbench report should read those five before the
-other eight. And one thing this catalog cannot tell you: whether the runner enforcing all
-of it behaves correctly against a real model. See the status note in `README.md` and the
-placebo block in `PROTOCOL.md` — as of this writing, that has not been verified.
+other eight. One thing this catalog could not originally tell you — whether the runner
+enforcing all of it behaves correctly against a real model — has since been checked: see
+the status note in `README.md` and the placebo block in `PROTOCOL.md`. Both arms of the
+live bracket passed, but only on a 12B local model; a hosted model has not been tried.
