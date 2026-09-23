@@ -1,13 +1,16 @@
 // ============================================================================
-// THIS FILE HAS NEVER BEEN RUN.
+// WHAT HAS BEEN RUN: a local 12B model only. Never a hosted model.
 //
-// Every assertion below is untested code, not a verified result. It was written
-// under a scope reduction that forbids invoking the real `claude` binary, running
-// a live bracket, or inventing/copying any measured delta, interval, or pass rate.
-// No number anywhere in this repository claims to come from this file.
+// `npm run verify:live` passed 2/2 on 2026-09-18 against google/gemma-4-12b-qat,
+// served locally through tools/local-claude.mjs (NULLBENCH_LIVE_CONCURRENCY=1):
+//   placebo         +0.0pp   [-27.8pp, +27.8pp]   40 graded runs, 0 dead
+//   known-positive  +100.0pp [+60.7pp, +100.0pp]  40 graded runs, 0 dead
+// Those are the figures in README.md and PROTOCOL.md's Placebo status block. They
+// establish that the runner separates signal from noise on that one model; they say
+// nothing about a hosted model, against which this file has never been run.
 //
-// This suite requires real API access and real money (see test/live/README.md for
-// the cost estimate). It is deliberately excluded from `npm test` -- it is reached
+// Against a hosted endpoint this suite spends real money (see test/live/README.md
+// for the cost estimate). It is deliberately excluded from `npm test` -- it is reached
 // only through `npm run verify:live`, which a human runs deliberately, on purpose,
 // with billing enabled. Do not treat a green `npm test` as having exercised this
 // file in any way.
