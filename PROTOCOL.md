@@ -11,7 +11,7 @@ Version: nullbench 0.1.0. Node >= 22, zero dependencies.
 
 ## Placebo status
 
-**VERIFIED on a local model — both arms pass. Never run against a hosted model.**
+**VERIFIED on a local model and on hosted Sonnet — both arms pass on both.**
 
 ```
 Last verified:            2026-09-18
@@ -20,6 +20,13 @@ Placebo interval:         +0.0pp [-27.8pp, +27.8pp] over 40 graded runs — span
                           as required
 Known-positive interval:  +100.0pp [+60.7pp, +100.0pp] over 40 graded runs — excludes
                           zero, as required
+Dead runs:                0 in either arm
+
+Last verified:            2026-09-24
+Model:                    sonnet, hosted, via the real `claude` CLI
+                          (NULLBENCH_CLAUDE_BIN unset)
+Placebo interval:         +0.0pp [-27.8pp, +27.8pp] over 40 graded runs — spans zero
+Known-positive interval:  +100.0pp [+60.7pp, +100.0pp] over 40 graded runs — excludes zero
 Dead runs:                0 in either arm
 ```
 
@@ -34,10 +41,13 @@ runs, so they reproduce across invocations rather than being one lucky batch.
 
 One caveat remains, and it is not a small one:
 
-- **This is one 12B local model.** It establishes that the runner can separate signal from
-  noise on that model. It says nothing about a hosted model. The cobra worked example in
-  `examples/cobra/` — which detected `+80.0pp [+37.0pp, +91.6pp]` against a matched control
-  on Sonnet — is separate evidence, not a second bracket.
+- **Two models, one bracket each.** It establishes that the runner separates signal from
+  noise on a 12B local model and on hosted Sonnet (2026-09-24, 2 tests, 2 passed, 2.8
+  minutes). It says nothing about other hosted models, and each arm is a single batch.
+- **The ledger cannot tell these runs apart.** Both sets of ledger entries read
+  `model=sonnet`, because the ledger records the registered model name, not the backend
+  that answered; the 2026-09-18 runs went through `tools/local-claude.mjs`. The backend is
+  stated here and in `test/live/README.md`, not in the ledger.
 
 Reproducing this requires `NULLBENCH_LIVE_CONCURRENCY=1`: at the runner's default of 4,
 LM Studio drops connections and the batch comes back VOID. See `test/live/README.md`.
