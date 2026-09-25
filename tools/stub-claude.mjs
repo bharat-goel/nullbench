@@ -17,6 +17,18 @@
 // marker; only a LATER run sharing the same directory can see it. That is exactly the
 // cross-run visibility being pinned in test/runner.test.mjs. Default (env unset)
 // behaviour is byte-identical to before this existed: nothing is written.
+//
+// NULLBENCH_STUB_LIMIT_AFTER: when set to N, the first N invocations (counted globally
+// across every rule, as a real plan's session limit is) behave normally, and every
+// invocation after that prints the CLI's session-limit message to stderr, nothing to
+// stdout, and exits 1. This is the failure that voided skill-audit's
+// uap-release-analyzer twice: the process stays alive, every remaining call dies fast,
+// and the batch completes as VOID.
+//
+// NULLBENCH_STUB_KILL_PARENT_AFTER: when set to N, invocation N+1 SIGKILLs its parent
+// (the nullbench process) before replying -- a laptop lid, an OOM kill, a closed
+// terminal. Nothing in the parent's `finally` runs. Only meaningful when nullbench is
+// spawned as its own process; in-process tests must not set it.
 
 import {
   readFileSync,
@@ -97,11 +109,14 @@ function releaseLock(fd) {
 }
 
 const lockFd = acquireLock();
-let i;
+let i, calls;
 try {
   const state = existsSync(statePath) ? JSON.parse(readFileSync(statePath, "utf8")) : {};
   i = state[key] ?? 0;
   state[key] = i + 1;
+  // Global invocation index, zero-based, for the session-limit and kill switches.
+  calls = state.__calls__ ?? 0;
+  state.__calls__ = calls + 1;
   // Write-then-rename. A partial write is read back as truncated JSON, the stub exits
   // non-zero, and the runner records a dead run. Measured at roughly 30% of runs
   // before this was made atomic. Still worth doing inside the lock: it protects a
@@ -111,6 +126,17 @@ try {
   renameSync(tmp, statePath);
 } finally {
   releaseLock(lockFd);
+}
+
+const killAfter = process.env.NULLBENCH_STUB_KILL_PARENT_AFTER;
+if (killAfter !== undefined && calls >= Number(killAfter)) {
+  process.kill(process.ppid, "SIGKILL");
+  process.exit(1);
+}
+const limitAfter = process.env.NULLBENCH_STUB_LIMIT_AFTER;
+if (limitAfter !== undefined && calls >= Number(limitAfter)) {
+  process.stderr.write("You've hit your session limit · resets 11pm\n");
+  process.exit(1);
 }
 
 const outs = rule.outs ?? [""];

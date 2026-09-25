@@ -54,7 +54,7 @@ tell a real effect from noise rests on the bracket itself, not only on the cobra
 example — which remains separate evidence: it did detect a large effect
 (`+80.0pp [+37.0pp, +91.6pp]`) with a matched control, but is not a purpose-built positive
 control with a mechanically guaranteed answer. The protocol logic is additionally tested
-end to end against a stub (138 offline tests, no network, no API key); the stub is not a
+end to end against a stub (148 offline tests, no network, no API key); the stub is not a
 model.
 
 **What it costs.** 80 CLI invocations — 40 per fixture, being 2 tasks x 2 arms x 10 reps,
@@ -138,8 +138,8 @@ Two kinds of problem, handled differently on purpose.
 **Structural** — the registration cannot be executed at all: no `nullbench.json`,
 malformed JSON, a missing or mistyped field, a bad enum, a duplicate id, a task file that
 does not exist or is not JSON, a `--task` naming an unregistered id, a missing
-`SKILL.md`, or a malformed `canaries.json`. The runner prints the problems and exits
-**2**. Nothing is spent.
+`SKILL.md`, a malformed `canaries.json`, or a `--resume` that §10 refuses. The runner
+prints the problems and exits **2**. Nothing is spent.
 
 **Drift** — the registration can be executed but not *confirmed*: a task file whose bytes
 no longer match its declared `sha256` (`HASH_MISMATCH`), or a suite with no `harm` task
@@ -379,6 +379,18 @@ the point of declaring it.
 A VOID entry has no task rows and no average line — only the header, the config line, and
 the `note:` lines naming the thin cells.
 
+A resumed run (§10) is its own entry, appended like any other; the entry it resumes is
+never edited. Its header ends `· resumes <earlier stamp>`, and two lines follow the config
+line:
+
+```
+resume: of=<stamp resumed> origin=<first stamp in the chain> reattempted=<n> canaries=re-run
+contributing: <stamp> (<k> graded), <stamp> (<k> graded), ...
+```
+
+If the resumed run was killed before it could write its own entry, a `note:` line says
+so, and its graded runs are recorded here instead.
+
 ---
 
 ## 7. Isolation
@@ -443,7 +455,91 @@ is known before it is paid for.
 |---|---|
 | 0 | the run completed and was classed CONFIRMATORY or EXPLORATORY; or `--dry-run`; or the operator declined at the prompt |
 | 1 | VOID, or an unhandled error during reporting |
-| 2 | structural failure — the registration could not be executed, nothing was spent |
+| 2 | structural failure — the registration could not be executed, or a `--resume` was refused; nothing was spent |
+
+---
+
+## 10. Resuming an interrupted batch
+
+A batch interrupted partway through — a plan's session limit, an API outage, a killed
+process — is VOID or incomplete, and before this section existed the only remedy was to
+re-run all of it. `--task` cannot split a batch, because a filtered run is EXPLORATORY by
+§4 condition 2 and stays that way. `--resume <stamp>` finishes the batch instead.
+
+```bash
+node bin/nullbench.mjs ./my-suite --resume 2026-09-24T18:02:11Z
+```
+
+`<stamp>` is the earlier run's stamp, its `results/` directory name, or a path to its
+`records.json`. The requested config (model, judge model, reps, task set, skill override)
+defaults to that run's, not the registration's.
+
+### 10.1 What is re-attempted
+
+**Only runs that produced no answer.** A cell is re-attempted when its record is
+`failed: true` — the subject or the judge never answered: a non-zero exit, empty output,
+a session limit — or when it has no record at all because the process died before
+reaching it. **A graded run is never re-attempted, pass or fail**, including a judge reply
+with no parseable verdict, which §5.1 counts as a graded FAIL. Re-running graded cells
+until the number looks good is the file drawer (`FAILURES.md` entry 13).
+
+Graded records are carried forward byte-for-byte, each tagged with the stamp of the run
+that produced it. The superseded dead records are listed under `reattempted` in the new
+`records.json`, not dropped.
+
+### 10.2 What is refused
+
+Each of these exits 2 and spends nothing:
+
+- **A different registration hash `H`.** Any change to a task file, `SKILL.md`, or
+  `model`/`judge_model`/`reps` in `nullbench.json` moves `H` (§3), and the refusal names
+  what changed. Updating a task's declared `sha256` to match does not help: `H` is over
+  the bytes on disk.
+- **A different requested config** — model, judge model, reps, task set, or skill
+  override — even where `H` would allow it, because the carried records were produced
+  under the earlier one.
+- **A run that has already been resumed.** Resuming the same run twice would draw its
+  dead cells twice and let the second draw replace the first. Resume the resume instead;
+  the chain may be as long as needed.
+- **A run with nothing to re-attempt.**
+
+### 10.3 Canaries
+
+**The whole canary set is re-run on every resume. Nothing is carried forward as a pass.**
+The re-attempted cells are graded by a new judge session, which has to be validated on its
+own; the carried cells were graded by the earlier session, whose canary result still
+stands. So condition 5 of §4 holds for the combined batch only when:
+
+- the fresh canary run is clean;
+- no run in the chain misgraded a canary — `canaries.json` is not part of `H`, and without
+  this rule a resume would let an author fix a failing canary file and wash the misgrade
+  out of the batch;
+- every run that contributed a judge-graded record also recorded a canary result.
+
+A canary call that merely never answered in an earlier run does not count against it — a
+dead call is not a misgrade, and the fresh set re-checks it. The report states which rule
+applied and names any carried misgrade by stamp.
+
+### 10.4 Classification and reporting
+
+§4 and §5 apply to the **combined** records, unchanged. A resume that leaves any cell below
+the floor is VOID, and can itself be resumed. A resume that satisfies all six conditions
+is CONFIRMATORY; being resumed is not in itself a reason to demote, because every graded
+observation in it was made once, under the registered experiment.
+
+Every report of a resumed batch, VOID included, opens with a **Resumed batch** section
+naming every stamp that contributed records and how many graded runs each contributed.
+The ledger entry is described in §6.
+
+### 10.5 Checkpointing
+
+`records.json` is a checkpoint, not a summary. It is written before anything is spent and
+rewritten atomically after every record, carrying `complete: false` until the run ends.
+A process killed mid-batch runs no `finally` and so writes no ledger entry, but every run
+graded before the kill is on disk, and `--resume` accepts the incomplete checkpoint. The
+resume's own ledger entry records that the earlier run never completed.
+
+There is no `--batch-size`: a checkpoint after every record makes one redundant.
 
 ---
 

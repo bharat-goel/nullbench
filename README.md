@@ -51,6 +51,21 @@ its content hash, its kind, and a prediction:
 At least one `harm` task is required for a CONFIRMATORY stamp. Without a negative control,
 the cheapest way for any skill to pass its own evaluation is to fire on everything.
 
+If a batch dies partway through — a plan's session limit is the usual cause — resume it
+instead of paying for all of it again:
+
+```bash
+node bin/nullbench.mjs ./my-suite --resume 2026-09-24T18:02:11Z
+```
+
+Only the runs that produced no answer are re-attempted; every graded run, pass or fail, is
+carried forward unchanged. The resume is refused if a task file, `SKILL.md` or
+`nullbench.json` changed, or if the model, judge model or reps differ. The canaries are
+re-run in full, the ledger gets a separate entry linked to the original, and the report
+names every run that contributed records. `records.json` is checkpointed after every
+record, so a killed process loses nothing it had already graded. Rules:
+[`PROTOCOL.md` §10](PROTOCOL.md#10-resuming-an-interrupted-batch).
+
 A worked example is in [`examples/cobra/`](examples/cobra/). Full field reference,
 canonicalization, hash construction and the interval methods: [`PROTOCOL.md`](PROTOCOL.md).
 
@@ -101,6 +116,8 @@ registration was.
   and the flat ones, from a `finally` block with no path around it.
 - A verifier pattern lifted verbatim out of your own `SKILL.md`. Caught at preflight,
   before you spend anything.
+- A re-drawn graded run. `--resume` re-attempts only runs that never answered, refuses a
+  changed registration, and refuses to resume the same run twice.
 
 ## What has actually been run
 
@@ -108,7 +125,7 @@ Claims here are load-bearing, so they are itemised.
 
 | | Status |
 |---|---|
-| Protocol logic | **138 offline tests**, no network, no API key, stub `claude` binary |
+| Protocol logic | **148 offline tests**, no network, no API key, stub `claude` binary |
 | Worked example (`examples/cobra/`) | **run on Sonnet**, 2026-09-18 — 173 invocations, canaries 13/13, CONFIRMATORY |
 | Live bracket (`npm run verify:live`) | **2/2 passed** on a local `gemma-4-12b-qat` |
 

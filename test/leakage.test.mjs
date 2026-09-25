@@ -139,3 +139,16 @@ Ask what the measure actually rewards. Watch for perverse incentive.`;
   assert.ok(terms.some((t) => t.includes("perverse incentive")),
     "body content must be extracted after frontmatter removal");
 });
+
+test("a dead run's raw file is not counted as a checked control reply", () => {
+  // A resumed batch scans every contributing run's raw directory, and an interrupted run
+  // can be mostly dead. Counting stderr dumps as clean replies dilutes the rate below
+  // the threshold even when every real reply leaks.
+  const dir = mkdtempSync(join(tmpdir(), "nb-leak-"));
+  writeFileSync(join(dir, "t__control__1.txt"), "watch the perverse incentive");
+  for (const i of [2, 3, 4]) writeFileSync(join(dir, `t__control__${i}.txt`), "<<no output>>\nYou've hit your session limit");
+  const r = scanControlLeakage({ rawDir: dir, terms: ["perverse incentive"] });
+  assert.equal(r.checked, 1);
+  assert.equal(r.suspicious, true);
+  rmSync(dir, { recursive: true, force: true });
+});
