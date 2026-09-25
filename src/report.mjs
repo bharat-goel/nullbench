@@ -60,11 +60,37 @@ const HEADERS = {
   VOID: "Too few graded runs to report anything.",
 };
 
-export function renderReport({ rows, klass, reasons, warnings = [], requested, hash, canary }) {
+export function renderReport({ rows, klass, reasons, warnings = [], requested, hash, canary, resume = null }) {
   const L = [];
   L.push(`# nullbench report — ${klass}`, "");
   L.push(HEADERS[klass], "");
   L.push(`Registration \`${hash.slice(0, 16)}\` · model \`${requested.model}\` · judge \`${requested.judgeModel}\` · reps ${requested.reps}`, "");
+
+  // A resumed batch names every run that contributed records, before anything else, and
+  // in a VOID report too -- a reader must be able to find every raw directory behind a
+  // number, and tell a spliced batch from a single one. PROTOCOL.md §10.
+  if (resume) {
+    L.push("## Resumed batch", "");
+    L.push(`This batch resumes \`${resume.of}\`. Only runs that produced no answer were re-attempted ` +
+      `(${resume.reattempted} of them); every graded run, pass or fail, was carried forward unchanged. ` +
+      `Records came from:`, "");
+    const last = resume.contributions.length - 1;
+    for (const [i, c] of resume.contributions.entries()) {
+      const notes = [];
+      if (i === last) notes.push("this run");
+      if (c.stamp === resume.of && !resume.priorComplete) notes.push("never completed; it has no ledger entry of its own");
+      L.push(`- \`${c.stamp}\` — ${c.graded} graded run(s)${notes.length ? ` (${notes.join("; ")})` : ""}`);
+    }
+    L.push("");
+    if (canary?.carried) {
+      const c = canary.carried;
+      L.push(`Canaries were re-run in full on this resume` +
+        (canary.total ? ` (${canary.graded - canary.misgrades.length}/${canary.graded} correct${canary.dead?.length ? `, ${canary.dead.length} never answered` : ""})` : "") +
+        `, not carried forward. Earlier canary misgrades still count: ` +
+        (c.misgrades.length ? c.misgrades.map((m) => `\`${m.stamp}\` ${m.id}`).join(", ") : "none") +
+        (c.unverified ? `; no canary result was recorded for \`${c.stamp}\`, so its judged runs are unverified` : "") + ".", "");
+    }
+  }
 
   if (reasons.length) {
     L.push(`## Why this run is ${klass.toLowerCase()}`, "");

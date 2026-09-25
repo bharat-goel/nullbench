@@ -1,6 +1,6 @@
 // Flag parsing, cost preflight, orchestration, exit codes.
 
-import { mkdirSync, writeFileSync, existsSync, readFileSync } from "node:fs";
+import { mkdirSync, writeFileSync, existsSync, readFileSync, renameSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 import { loadRegistration, patternDrift, RegistrationError } from "./prereg.mjs";
 import { runSuite, gradedCounts } from "./runner.mjs";
@@ -9,6 +9,7 @@ import { classify } from "./classify.mjs";
 import { aggregate, renderReport } from "./report.mjs";
 import { appendEntry } from "./ledger.mjs";
 import { distinctiveTerms, scanControlLeakage } from "./leakage.mjs";
+import { loadPrior, resumeProblems, partition, mergeCanary, contributions, stampDir } from "./resume.mjs";
 
 // A value-taking flag in final position reads `undefined` and used to fall back to the
 // registered value in silence -- `nullbench . --model` ran the registered model and said
@@ -55,7 +56,7 @@ export function findRepoRoot(dir) {
 }
 
 export function parseArgs(argv) {
-  const out = { dir: ".", reps: null, model: null, judgeModel: null, taskIds: [], yes: false, dryRun: false, skill: null, costPerCall: 0.02, concurrency: null };
+  const out = { dir: ".", reps: null, model: null, judgeModel: null, taskIds: [], yes: false, dryRun: false, skill: null, costPerCall: 0.02, concurrency: null, resume: null };
   const rest = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -66,6 +67,7 @@ export function parseArgs(argv) {
     else if (a === "--skill") out.skill = operand(argv[++i], "--skill");
     else if (a === "--cost-per-call") out.costPerCall = floatArg(argv[++i], "--cost-per-call");
     else if (a === "--concurrency") out.concurrency = intArg(argv[++i], "--concurrency");
+    else if (a === "--resume") out.resume = operand(argv[++i], "--resume");
     else if (a === "--yes") out.yes = true;
     else if (a === "--dry-run") out.dryRun = true;
     else rest.push(a);
@@ -74,11 +76,14 @@ export function parseArgs(argv) {
   return out;
 }
 
-export function plan(registration, requested, canaryCount = 0) {
+// `slots`, when given, is the list of cells a resume will re-attempt; otherwise every
+// cell of every requested task runs.
+export function plan(registration, requested, canaryCount = 0, slots = null) {
   const byId = new Map(registration.tasks.map((t) => [t.id, t]));
-  const chosen = requested.taskIds.map((id) => byId.get(id));
-  const subjectRuns = chosen.length * 2 * requested.reps;
-  const judgeRuns = chosen.filter((t) => t.spec.verify.type === "judge").length * 2 * requested.reps;
+  const cells = slots ?? requested.taskIds.flatMap((id) =>
+    Array.from({ length: 2 * requested.reps }, () => ({ task: id })));
+  const subjectRuns = cells.length;
+  const judgeRuns = cells.filter((c) => byId.get(c.task).spec.verify.type === "judge").length;
   return { subjectRuns, judgeRuns, canaryRuns: canaryCount, total: subjectRuns + judgeRuns + canaryCount };
 }
 
@@ -95,9 +100,24 @@ export async function main(argv, { stdout = process.stdout, stdin = process.stdi
   const dir = resolve(args.dir);
   const repoRoot = findRepoRoot(dir);
 
+  // A resume reads the run it resumes first: that run's requested config is the default
+  // for this one, so `nullbench suite --resume <stamp>` re-uses the flags it ran with
+  // instead of silently falling back to the registration's. Any flag given explicitly
+  // still has to match it -- resumeProblems refuses otherwise.
+  let prior = null;
+  if (args.resume) {
+    try {
+      prior = loadPrior(dir, args.resume);
+    } catch (e) {
+      if (e instanceof RegistrationError) { stdout.write(`${e.message}\n`); return 2; }
+      throw e;
+    }
+  }
+  const was = prior?.data.requested ?? {};
+
   // Resolved before loadRegistration: the skill is hashed into H, so the registration
   // must be loaded knowing which skill file will actually be injected.
-  const skillFile = args.skill ? resolve(args.skill) : join(dir, "SKILL.md");
+  const skillFile = args.skill ? resolve(args.skill) : (was.skillOverride ?? join(dir, "SKILL.md"));
 
   let registration;
   try {
@@ -108,14 +128,14 @@ export async function main(argv, { stdout = process.stdout, stdin = process.stdi
   }
 
   const requested = {
-    reps: args.reps ?? registration.config.reps,
-    model: args.model ?? registration.config.model,
-    judgeModel: args.judgeModel ?? registration.config.judge_model,
-    taskIds: args.taskIds.length ? args.taskIds : registration.tasks.map((t) => t.id),
+    reps: args.reps ?? was.reps ?? registration.config.reps,
+    model: args.model ?? was.model ?? registration.config.model,
+    judgeModel: args.judgeModel ?? was.judgeModel ?? registration.config.judge_model,
+    taskIds: args.taskIds.length ? args.taskIds : (was.taskIds ?? registration.tasks.map((t) => t.id)),
     // A --skill override swaps the thing under test. H already covers the substituted
     // file's contents, but a reader comparing two reports needs to see that the skill
     // came from somewhere other than the registered location.
-    skillOverride: args.skill ? resolve(args.skill) : null,
+    skillOverride: args.skill ? resolve(args.skill) : (was.skillOverride ?? null),
   };
 
   // Structural, not drift: an unknown id and a missing SKILL.md both mean the run
@@ -179,7 +199,26 @@ export async function main(argv, { stdout = process.stdout, stdin = process.stdi
     }
   }
 
-  const p = plan(registration, requested, loadedCanaries ? loadedCanaries.length : 0);
+  // Refused resumes exit 2 like any structural failure: nothing has been spent, and a
+  // refused resume must never be mistaken for a VOID result.
+  let resume = null;
+  if (prior) {
+    const problems = resumeProblems({ prior: prior.data, registration, requested, dir });
+    if (problems.length) {
+      stdout.write(`resume refused — nothing was spent:\n  - ${problems.join("\n  - ")}\n`);
+      return 2;
+    }
+    resume = { prior: prior.data, ...partition(prior.data, requested) };
+  }
+
+  const p = plan(registration, requested, loadedCanaries ? loadedCanaries.length : 0, resume?.toRun ?? null);
+  if (resume) {
+    stdout.write(
+      `resuming ${resume.prior.stamp}${resume.prior.complete === false ? " (never completed)" : ""}: ` +
+      `carrying ${resume.carried.length} graded run(s) forward unchanged, ` +
+      `re-attempting ${resume.toRun.length} that produced no answer` +
+      (loadedCanaries ? `; the full canary set is re-run` : "") + `\n`);
+  }
   stdout.write(
     `nullbench — ${registration.tasks.length} registered task(s), running ${requested.taskIds.length}\n` +
     `  registration  ${registration.hash.slice(0, 16)}\n` +
@@ -201,16 +240,49 @@ export async function main(argv, { stdout = process.stdout, stdin = process.stdi
     return 0;
   }
 
-  const stamp = new Date().toISOString().replace(/\.\d+Z$/, "Z");
-  const outDir = join(dir, "results", stamp.replace(/[:.]/g, "-"));
+  // Stamps have one-second resolution and name a run everywhere -- its results
+  // directory, its ledger entry, and every record it contributes to a resumed batch. Two
+  // runs in the same second would share a directory, and a resume started that fast
+  // would overwrite the checkpoint it is resuming. Wait out the second instead.
+  let stamp, outDir;
+  for (;;) {
+    stamp = new Date().toISOString().replace(/\.\d+Z$/, "Z");
+    outDir = join(dir, "results", stampDir(stamp));
+    if (!existsSync(outDir)) break;
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1000 - (Date.now() % 1000) + 5);
+  }
   mkdirSync(outDir, { recursive: true });
+
+  // records.json is a checkpoint, rewritten after every record and before anything is
+  // spent, not a summary written once at the end. A process killed mid-batch -- a
+  // closed laptop, an OOM, a Ctrl-C -- runs no `finally`, and before this it lost every
+  // graded run along with the ledger entry. `complete: false` marks a checkpoint whose
+  // run has not finished; --resume accepts it (PROTOCOL.md §10).
+  const chain = resume ? [...(resume.prior.chain ?? [resume.prior.stamp]), stamp] : [stamp];
+  const carried = resume?.carried ?? [];
+  const fresh = [];
+  const checkpoint = { stamp, hash: registration.hash, klass: null, complete: false, requested,
+    resumes: resume?.prior.stamp ?? null, chain,
+    registration: {
+      config: registration.config, skill_sha256: registration.skillSha,
+      tasks: registration.tasks.map((t) => ({ id: t.id, sha256: t.actualSha })),
+    },
+    canary: null, records: carried,
+    reattempted: resume ? resume.superseded.map(({ task, cond, rep, stamp: s, why }) => ({ task, cond, rep, stamp: s, why })) : [],
+  };
+  const save = () => {
+    const path = join(outDir, "records.json");
+    writeFileSync(`${path}.tmp`, JSON.stringify(checkpoint, null, 2));
+    renameSync(`${path}.tmp`, path);
+  };
+  save();
 
   let canary = null;
   if (hasJudged) {
     if (!loadedCanaries) {
       stdout.write(`\nThis suite has judge-graded tasks but no canaries.json.\n` +
         `An ungated judge is an unverified safeguard; judged results cannot be confirmed.\n`);
-      canary = { ok: false, misgrades: [{ id: "missing", why: "no canaries.json" }], total: 0 };
+      canary = { ok: false, misgrades: [{ id: "missing", why: "no canaries.json" }], total: 0, graded: 0, dead: [] };
     } else {
       // runCanaries mkdtemps, isolation-checks and removes one sandbox per canary call.
       canary = await runCanaries({
@@ -222,8 +294,19 @@ export async function main(argv, { stdout = process.stdout, stdin = process.stdi
     }
   }
 
-  const { records } = await runSuite({
+  const canaryReasons = [];
+  if (resume && canary) {
+    const merged = mergeCanary({ fresh: canary, prior: resume.prior, registration });
+    canary = merged.canary;
+    canaryReasons.push(...merged.reasons);
+  }
+  checkpoint.canary = canary;
+  save();
+
+  await runSuite({
     registration, requested, skillFile, fixtureRoot: dir, repoRoot, rawDir: join(outDir, "raw"),
+    slots: resume?.toRun ?? null, stamp,
+    onRecord: (r) => { fresh.push(r); checkpoint.records = [...carried, ...fresh]; save(); },
     // Default 4 suits a hosted endpoint. A local model behind LM Studio drops
     // connections under it -- observed as `fetch failed` on 39 of 40 calls, which is a
     // VOID report rather than a wrong number, but still a wasted run. --concurrency 1
@@ -234,9 +317,18 @@ export async function main(argv, { stdout = process.stdout, stdin = process.stdi
   });
   stdout.write("\n\n");
 
+  // The floor (§5.1) and everything after it apply to the combined records: a resume
+  // that still leaves a cell thin is VOID exactly as a fresh run would be.
+  const records = [...carried, ...fresh];
   const counts = gradedCounts(records);
-  const { klass, reasons } = classify({
+  const classified = classify({
     registration, requested, gradedCounts: counts, canaryOk: canary ? canary.ok : null });
+  const { klass } = classified;
+  const reasons = klass === "VOID" ? classified.reasons : [...classified.reasons, ...canaryReasons];
+  const resumeInfo = resume ? {
+    of: resume.prior.stamp, origin: chain[0], priorComplete: resume.prior.complete !== false,
+    reattempted: resume.toRun.length, contributions: contributions(chain, records),
+  } : null;
   const rows = klass === "VOID" ? [] : aggregate(records, registration.tasks.filter((t) => requested.taskIds.includes(t.id)));
 
   // Everything from here can throw, and by now the batch has been paid for. The ledger
@@ -246,17 +338,23 @@ export async function main(argv, { stdout = process.stdout, stdin = process.stdi
   const warnings = [];
   try {
     const terms = distinctiveTerms(readFileSync(skillFile, "utf8"));
-    const leak = scanControlLeakage({ rawDir: join(outDir, "raw"), terms });
+    // Every run in the chain holds some of the combined batch's raw replies.
+    const leak = chain.map((s) => scanControlLeakage({ rawDir: join(dir, "results", stampDir(s), "raw"), terms }))
+      .reduce((a, b) => ({ checked: a.checked + b.checked, hits: a.hits + b.hits }), { checked: 0, hits: 0 });
+    leak.suspicious = leak.checked > 0 && leak.hits / leak.checked >= 0.5;
     if (leak.suspicious) {
       warnings.push(
         `possible control-arm leakage: ${leak.hits}/${leak.checked} control replies contain ` +
         `the skill's distinctive vocabulary. A weak heuristic, not proof — see FAILURES.md entry 5.`);
     }
-    md = renderReport({ rows, klass, reasons, warnings, registration, requested, hash: registration.hash, canary });
+    md = renderReport({ rows, klass, reasons, warnings, registration, requested, hash: registration.hash, canary, resume: resumeInfo });
     writeFileSync(join(outDir, "report.md"), md);
-    writeFileSync(join(outDir, "records.json"), JSON.stringify({ stamp, hash: registration.hash, klass, requested, records }, null, 2));
   } finally {
-    appendEntry(join(dir, "LEDGER.md"), { stamp, klass, hash: registration.hash, requested, rows, reasons: [...reasons, ...warnings] });
+    checkpoint.klass = klass;
+    checkpoint.complete = true;
+    checkpoint.records = records;
+    save();
+    appendEntry(join(dir, "LEDGER.md"), { stamp, klass, hash: registration.hash, requested, rows, reasons: [...reasons, ...warnings], resume: resumeInfo });
   }
 
   stdout.write(`${md}\n`);
