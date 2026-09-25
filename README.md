@@ -110,7 +110,7 @@ Claims here are load-bearing, so they are itemised.
 |---|---|
 | Protocol logic | **138 offline tests**, no network, no API key, stub `claude` binary |
 | Worked example (`examples/cobra/`) | **run on Sonnet**, 2026-09-18 — 173 invocations, canaries 13/13, CONFIRMATORY |
-| Live bracket (`npm run verify:live`) | **2/2 passed** on a local `gemma-4-12b-qat` |
+| Live bracket (`npm run verify:live`) | **2/2 passed** on a local `gemma-4-12b-qat` (2026-09-18) and on hosted Sonnet (2026-09-24) |
 
 The bracket is the guarantee that the runner separates signal from noise. Its placebo arm
 (an irrelevant skill) returned `+0.0pp [-27.8pp, +27.8pp]`, spanning zero. Its
@@ -118,8 +118,8 @@ known-positive arm (a mechanically detectable one) returned `+100.0pp [+60.7pp, 
 excluding it. Both arms are needed: a harness that always reports null passes the placebo
 arm perfectly.
 
-**The bracket has only run against a 12B local model.** That establishes the machinery
-works there. It says nothing about a hosted model.
+**The bracket has run on two models: a 12B local model and hosted Sonnet.** It says
+nothing about other hosted models, and each arm is one batch.
 
 ## What nullbench does not do
 
