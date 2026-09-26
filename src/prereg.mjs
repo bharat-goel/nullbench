@@ -115,6 +115,12 @@ export function loadRegistration(dir, skillFile = null) {
   const protectedPaths = [
     join(dir, "nullbench.json"),
     join(dir, "canaries.json"),
+    // results/ holds every earlier run's raw subject and judge replies; LEDGER.md holds
+    // every earlier run's summary, predictions included. A skill_dir reaching either
+    // would copy prior output -- possibly a judge's own verdicts, or the exact
+    // pass/fail pattern of an earlier run -- into the treatment sandbox as "the skill".
+    join(dir, "results"),
+    join(dir, "LEDGER.md"),
     ...tasks.map((t) => join(dir, t.file)),
   ];
   // Fixtures are checked separately and in BOTH directions (resolveSkill/

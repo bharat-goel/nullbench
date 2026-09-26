@@ -256,6 +256,53 @@ test("skill_dir nested inside a declared fixture is a structural failure, wired 
   rmSync(dir, { recursive: true, force: true });
 });
 
+// N6 (fix round 2), part 2: results/ (this suite's own run-output directory, holding
+// earlier raw subject/judge replies) and LEDGER.md (every past run's summary,
+// including predictions and per-task deltas) were not protected paths at all. A
+// skill_dir reaching either would copy prior replies -- possibly including a judge's
+// own graded verdicts, or an earlier run's actual pass/fail pattern -- into the
+// treatment sandbox as part of "the skill".
+test("skill_dir overlapping results/ is a structural failure", () => {
+  const dir = mkdtempSync(join(tmpdir(), "nb-skilldir-results-"));
+  mkdirSync(join(dir, "tasks"));
+  mkdirSync(join(dir, "results"), { recursive: true });
+  const body = JSON.stringify({ id: "t", prompt: "p", verify: { type: "any", patterns: ["x"] } });
+  writeFileSync(join(dir, "tasks", "t.json"), body);
+  writeFileSync(join(dir, "nullbench.json"), JSON.stringify({
+    model: "sonnet", judge_model: "sonnet", reps: 4, skill_dir: "results",
+    tasks: [{ id: "t", file: "tasks/t.json", sha256: sha(body), kind: "harm", predict: "no-effect" }],
+  }));
+  assert.throws(() => loadRegistration(dir), (e) => {
+    assert.ok(e instanceof RegistrationError);
+    assert.match(e.message, /results/);
+    return true;
+  });
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("skill_dir overlapping LEDGER.md is a structural failure", () => {
+  // LEDGER.md always sits at the suite root (ledger.mjs writes it beside
+  // nullbench.json), so the only way a strict-subdirectory skill_dir can "overlap"
+  // with it at all is by literally being pointed at that path -- exactly the mistake
+  // this protects against, not a naturally-arising nested case the way a fixture or a
+  // task file (which genuinely can sit several directories deep) can be.
+  const dir = mkdtempSync(join(tmpdir(), "nb-skilldir-ledger-"));
+  mkdirSync(join(dir, "tasks"));
+  writeFileSync(join(dir, "LEDGER.md"), "## an earlier run\n");
+  const body = JSON.stringify({ id: "t", prompt: "p", verify: { type: "any", patterns: ["x"] } });
+  writeFileSync(join(dir, "tasks", "t.json"), body);
+  writeFileSync(join(dir, "nullbench.json"), JSON.stringify({
+    model: "sonnet", judge_model: "sonnet", reps: 4, skill_dir: "LEDGER.md",
+    tasks: [{ id: "t", file: "tasks/t.json", sha256: sha(body), kind: "harm", predict: "no-effect" }],
+  }));
+  assert.throws(() => loadRegistration(dir), (e) => {
+    assert.ok(e instanceof RegistrationError);
+    assert.match(e.message, /LEDGER\.md/);
+    return true;
+  });
+  rmSync(dir, { recursive: true, force: true });
+});
+
 test("skill_dir equal to the registration directory itself is a structural failure", () => {
   const dir = mkdtempSync(join(tmpdir(), "nb-skilldir-dot-"));
   mkdirSync(join(dir, "tasks"));

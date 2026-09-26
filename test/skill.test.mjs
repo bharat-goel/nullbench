@@ -182,6 +182,23 @@ test("resolveSkill accepts a skill_dir and a fixture that are genuinely unrelate
   rmSync(dir, { recursive: true, force: true });
 });
 
+// N6 (fix round 2), part 1: an intermediate symlink ALONG skill_dir's own path (not the
+// root itself, which hashSkill already refuses, and not a file WITHIN skill_dir, which
+// walkSkillDir already refuses) used to escape the suite directory undetected: resolve()
+// and relative() are purely lexical and never consult the filesystem, so "l/x" with "l"
+// a symlink pointing outside the suite still looked, by string comparison, like a clean
+// path inside it. Covered by N1's realpath-based strict-subdirectory check as a side
+// effect (realpath resolves every symlink component along the whole path, not only the
+// final one) -- this pins that it actually works for this specific shape.
+test("resolveSkill refuses an intermediate symlink along skill_dir's own path, not only at the root", () => {
+  const outside = mkdtempSync(join(tmpdir(), "nb-skill-outside-"));
+  const dir = tmp();
+  symlinkSync(outside, join(dir, "l"));
+  assert.throws(() => resolveSkill(dir, { skillDir: "l/x" }), RegistrationError);
+  rmSync(outside, { recursive: true, force: true });
+  rmSync(dir, { recursive: true, force: true });
+});
+
 test("resolveSkill accepts a clean strict-subdirectory skill_dir with no overlap", () => {
   const dir = tmp();
   const protectedPaths = [join(dir, "nullbench.json"), join(dir, "tasks", "sig.json")];

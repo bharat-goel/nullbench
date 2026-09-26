@@ -190,11 +190,14 @@ condition its own structural failure:
 - must resolve to a strict subdirectory of the registration directory (catches spellings
   like `"sub/.."` that the checks above don't, and anything else that would put the
   resolved path at or outside the registration directory);
-- must not contain, anywhere inside it, `nullbench.json`, `canaries.json`, or any
+- must not contain, anywhere inside it, `nullbench.json`, `canaries.json`, `results/`
+  (this suite's own run-output directory — every earlier run's raw subject and judge
+  replies), `LEDGER.md` (every earlier run's summary, predictions included), or any
   registered task's file — each of those holds content (a verifier's patterns, a
-  canary's known-PASS replies) that PATTERN_IN_SKILL and the leakage scan exist to keep
-  out of the treatment sandbox, and copying `skill_dir` wholesale would hand it over
-  regardless of what those checks catch afterward;
+  canary's known-PASS replies, a prior judge verdict, a prior run's exact pass/fail
+  pattern) that PATTERN_IN_SKILL and the leakage scan exist to keep out of the
+  treatment sandbox, and copying `skill_dir` wholesale would hand it over regardless of
+  what those checks catch afterward;
 - must not be inside, equal to, or contain any declared fixture directory, checked in
   **both** directions. A fixture is copied into every arm's sandbox, control included
   (§7) — a `skill_dir` reachable through one would put `SKILL.md` and every reference
