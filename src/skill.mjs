@@ -153,6 +153,14 @@ export function hashSkill(skill) {
     if (e instanceof RegistrationError) throw e;
     throw new RegistrationError([`skill_dir could not be read: ${e.message}`]);
   }
+  // walkSkillDir's own order is depth-first with directory entries interleaved among
+  // sibling files -- NOT a sort by full path ("a/x" can come before "a-b" there, since
+  // "a" the directory and "a-b" the file are compared as sibling NAMES at the level
+  // where they're actually siblings). PROTOCOL §3 promises the manifest sorted by full
+  // path, where "a-b" < "a/x" as plain strings (code unit 45 for "-" against 47 for
+  // "/"), so it has to be sorted here, once, after the walk -- not relied on to fall out
+  // of readdir order at each level.
+  files.sort();
 
   const manifest = [];
   for (const p of files) {

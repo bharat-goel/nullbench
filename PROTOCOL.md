@@ -241,6 +241,16 @@ single-file `SKILL.md`, because that is the CLI's own existence check to report.
 Absent `skill_dir`, behaviour is byte-identical to a suite that has never heard of it: a
 single `SKILL.md` beside the registration, injected exactly as before.
 
+**Known gap, disclosed rather than fixed here:** `H` is computed once, at load, from
+whatever is on disk at that moment — but the skill (single file or directory) is
+re-read from the live path on every run, not snapshotted once at preflight. Nothing
+stops the files changing between preflight and the last run in the batch, which would
+mean different runs in the same batch saw different bytes under one `H`. This is
+pre-existing behaviour for a single `SKILL.md` (skill_dir does not make it worse, only
+gives it more surface area) and is not fixed by this feature; closing it would mean
+copying a snapshot once at preflight and running every arm/rep against that copy
+instead of the live path.
+
 ---
 
 ## 2. Canonicalization
@@ -280,14 +290,32 @@ as found on disk at run time** — not the value declared in the registration.
   heard of it hashes exactly as it always did.
 - **Present**: the sha256 of `canonical(manifest)`, where `manifest` is a JSON array of
   `{ path, sha256 }` — one entry per file anywhere in `skill_dir`, `path` a POSIX-relative
-  path from `skill_dir`'s root, sorted by `path` — over **every file in the directory**,
-  not only `SKILL.md`. Editing any reference file moves `H`; rewriting one with the exact
-  same bytes (a no-op reformat) does not, since the manifest hashes bytes, not mtimes or
-  a formatter's opinion.
+  path from `skill_dir`'s root — over **every file in the directory**, not only
+  `SKILL.md`. Editing any reference file moves `H`; rewriting one with the exact same
+  bytes (a no-op reformat) does not, since the manifest hashes bytes, not mtimes or a
+  formatter's opinion.
+
+  **The array is sorted by the full `path` string, as plain code-unit comparison, after
+  the whole directory has been walked** — not by whatever order a depth-first walk with
+  a per-directory sort happens to visit files in. Those two are NOT the same ordering:
+  walking `a/` before its sibling file `a-b` (because the directory NAME `"a"` sorts
+  before the file name `"a-b"` at the level where they're actually siblings) visits
+  `a/x` before `a-b`, but sorting the full paths puts `"a-b"` first — `-` is code point
+  45, `/` is code point 47, so `"a-"` sorts before `"a/"`. An implementation that sorts
+  only within each directory during the walk, instead of sorting the complete path list
+  once afterward, produces a different `H` for the same directory contents. This is the
+  same code-unit ordering §2 uses for object keys.
+
+  **Not covered by the manifest, and therefore not by `H`:** empty directories, and file
+  modes/permissions. A directory that contains nothing is invisible to a manifest built
+  over files; a file's executable bit or other mode changing without its bytes changing
+  moves nothing. Both are copied into the sandbox exactly as found — this is a disclosed
+  gap in what `H` names, not a claim that either is impossible to change unnoticed.
 
 Either way, `null` when no skill is present at all — a structural failure the CLI
 rejects before spending anything, and hashing it as a distinct value keeps "no skill"
-from colliding with any real one.
+from colliding with any real one. Once `skill_dir`'s root is confirmed to exist, any
+*other* problem reading it (see §1.4) is a structural failure, never a silent `null`.
 
 `H` is stamped into the report header and every ledger entry, abbreviated to its first 16
 hex characters for display.

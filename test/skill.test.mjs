@@ -180,6 +180,28 @@ test("hashSkill is stable when a file is rewritten with byte-identical content",
   rmSync(dir, { recursive: true, force: true });
 });
 
+// Proven in the review: walking depth-first with a per-directory sort is NOT the same
+// as sorting the full path list -- "a/x" and "a-b" walk in the order [a/x, a-b] (since
+// "a" the directory and "a-b" the file are compared as SIBLING NAMES at the top level,
+// where "a" < "a-b" puts the directory first and its contents get walked into before
+// "a-b" is ever reached), but PROTOCOL §3 promises a manifest sorted by full path, where
+// "a-b" < "a/x" (as plain strings, "-" is code point 45 and "/" is 47, so "a-" sorts
+// before "a/"). Anyone recomputing H from the spec would get a different value unless
+// the implementation actually sorts by path after the walk, not merely within it.
+test("hashSkill's manifest is sorted by full path, not by per-directory walk order", () => {
+  const dir = tmp();
+  mkdirSync(join(dir, "skill"));
+  writeFileSync(join(dir, "skill", "SKILL.md"), "# demo");
+  mkdirSync(join(dir, "skill", "a"));
+  writeFileSync(join(dir, "skill", "a", "x"), "inside a/");
+  writeFileSync(join(dir, "skill", "a-b"), "a sibling file, not inside a/");
+  const skill = resolveSkill(dir, { skillDir: "skill" });
+  hashSkill(skill);
+  assert.deepEqual(skill.files, ["SKILL.md", "a-b", "a/x"],
+    "files must be sorted by full path (a-b before a/x, code unit 45 < 47), not walk order");
+  rmSync(dir, { recursive: true, force: true });
+});
+
 test("hashSkill caches the file list on the descriptor for reuse", () => {
   const dir = tmp();
   makeSkillDir(dir);
