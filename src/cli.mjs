@@ -1,6 +1,7 @@
 // Flag parsing, cost preflight, orchestration, exit codes.
 
-import { mkdirSync, writeFileSync, existsSync } from "node:fs";
+import { mkdirSync, writeFileSync, existsSync, mkdtempSync, cpSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, resolve, dirname } from "node:path";
 import { loadRegistration, patternDrift, RegistrationError } from "./prereg.mjs";
 import { runSuite, gradedCounts } from "./runner.mjs";
@@ -8,7 +9,7 @@ import { runCanaries, loadCanaries } from "./judge.mjs";
 import { classify } from "./classify.mjs";
 import { aggregate, renderReport } from "./report.mjs";
 import { appendEntry } from "./ledger.mjs";
-import { distinctiveTermsForSkill, scanControlLeakage } from "./leakage.mjs";
+import { distinctiveTermsForSkill, scanControlLeakage, assertIsolated } from "./leakage.mjs";
 import { combinedSkillText, skillFilePaths } from "./skill.mjs";
 
 // A value-taking flag in final position reads `undefined` and used to fall back to the
@@ -160,6 +161,26 @@ export async function main(argv, { stdout = process.stdout, stdin = process.stdi
       // -- a suite with no skill_dir never does that, so a fixture's own "skill" entry
       // cannot collide with anything.
       missingFixtures.push(`task "${id}" fixture "${fx}" has a top-level "skill" entry, which collides with the injected skill directory`);
+    } else {
+      // runner.mjs's makeCwd copies this exact directory into a fresh sandbox and calls
+      // assertIsolated on the copy before any invocation runs. That check used to run
+      // only at makeCwd time, i.e. mid-batch: a fixture that fails it gets its judge
+      // canaries paid for first, then aborts the whole batch the moment the first
+      // subject job reaches it (skill-audit Task 5's otel-go review, finding C-1 --
+      // "the fixture is refused at run time, and the preflight does not catch it").
+      // Reproduce that exact check here, against a throwaway copy, so the same fixture
+      // that would abort mid-run fails structurally (exit 2) instead, before anything
+      // is spent. isolation is checked against repoRoot, matching makeCwd's own call.
+      const probe = mkdtempSync(join(tmpdir(), "nullbench-fx-preflight-"));
+      try {
+        cpSync(fxDir, probe, { recursive: true });
+        const iso = assertIsolated(probe, repoRoot);
+        if (!iso.ok) {
+          missingFixtures.push(`task "${id}" fixture "${fx}" is not isolated:\n    - ${iso.problems.join("\n    - ")}`);
+        }
+      } finally {
+        rmSync(probe, { recursive: true, force: true });
+      }
     }
   }
   if (structural.length || missingFixtures.length) {
