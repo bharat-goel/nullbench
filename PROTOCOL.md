@@ -390,10 +390,26 @@ per task and not one per batch: a directory shared across runs makes the check b
 point-in-time, so anything a run creates afterwards is visible to every later run in the
 other arm, with no error and no change of class.
 
-The subject is additionally invoked with `--disallowedTools Write,Edit,Bash`. No verifier
-reads anything but stdout, so the subject has no reason to touch its cwd, and an artifact
-it leaves behind can only ever be a contamination vector. The judge is not restricted; it
-runs in the same per-run sandbox, which is destroyed with the run.
+The subject is invoked with no tool-restriction flags at all -- `src/claude.mjs` carries
+`SUBJECT_DISALLOWED_TOOLS` unused, deliberately, with the reasoning in a comment there: a
+task that hands the model a real failing test suite and grades whether it finds the bug
+needs Bash/Write/Edit to do that, and cobra's own published numbers were measured with no
+tool restriction, so restricting here would make the worked example non-comparable to the
+figures it exists to reproduce.
+
+What actually keeps the subject from touching its cwd is headless mode itself: `-p` with
+`--setting-sources project` and no project settings present means any tool that would
+need interactive approval is refused by the CLI's own permission system before it runs,
+not by an explicit deny list. This has a consequence worth stating plainly: **a skill
+whose method depends on running a script is measured here without that script ever
+running.** If a skill's SKILL.md tells the model to invoke a helper program, the
+treatment arm reads that instruction and cannot act on it; the measured effect is
+whatever the instruction achieves through the model's own reasoning alone, not through
+the tool it names. A skill this project cannot measure fairly is exactly a skill whose
+value depends on that gap.
+
+The judge is not restricted; it runs in the same per-run sandbox, which is destroyed
+with the run.
 
 Before each run, the sandbox is checked:
 
