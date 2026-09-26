@@ -18,6 +18,14 @@
 // cross-run visibility being pinned in test/runner.test.mjs. Default (env unset)
 // behaviour is byte-identical to before this existed: nothing is written.
 //
+// NULLBENCH_STUB_ECHO_SYSTEM_PROMPT: when set, and the invocation carries
+// --append-system-prompt-file <path>, the stub reads that file and appends:
+//   <system-prompt>...its full text...</system-prompt>
+// This is what lets a test confirm the Base-directory line actually reaches the CLI --
+// runner.mjs builds that file and passes its path on the real invocation; without this,
+// nothing outside runner.mjs's own process ever saw its contents, so the only thing a
+// test could check was the pure renderSkillSystemPrompt string builder in isolation.
+//
 // NULLBENCH_STUB_ECHO_TMPDIR_SANDBOXES: when set, the stub lists every entry under
 // os.tmpdir() whose name starts with "nullbench-run-" or "nullbench-fx-" (a SUBJECT
 // sandbox, fixture-backed or not) and appends:
@@ -165,6 +173,12 @@ if (process.env.NULLBENCH_STUB_ECHO_SKILL_FILES) {
 // After the listing, deliberately -- see the header note.
 if (process.env.NULLBENCH_STUB_WRITE_CWD_FILE) {
   writeFileSync(join(process.cwd(), process.env.NULLBENCH_STUB_WRITE_CWD_FILE), "written by a stub run\n");
+}
+if (process.env.NULLBENCH_STUB_ECHO_SYSTEM_PROMPT) {
+  const flagIdx = argv.indexOf("--append-system-prompt-file");
+  const promptFile = flagIdx !== -1 ? argv[flagIdx + 1] : null;
+  const text = promptFile && existsSync(promptFile) ? readFileSync(promptFile, "utf8") : "";
+  output += `\n<system-prompt>${text}</system-prompt>`;
 }
 if (process.env.NULLBENCH_STUB_ECHO_TMPDIR_SANDBOXES) {
   const sandboxes = readdirSync(tmpdir())

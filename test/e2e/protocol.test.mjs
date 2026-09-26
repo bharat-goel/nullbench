@@ -315,17 +315,43 @@ test("SKILL OVERRIDE: on a skill_dir suite, the reason names skill_dir, not SKIL
   assert.doesNotMatch(cap.text(), /registered SKILL\.md/);
 });
 
-test("SKILLDIR: treatment sees skill/ on disk; system prompt starts with the Base directory line", async () => {
+// Retitled and rewritten (fix round 2, "SKILLDIR 1"): this used to assert only exit 0
+// and CONFIRMATORY, which is true of ANY clean skill_dir run and proves nothing
+// specific about the system prompt actually reaching the CLI. The pure
+// renderSkillSystemPrompt unit test in test/runner.test.mjs covers the STRING it
+// builds; nothing end-to-end confirmed runner.mjs actually PASSES that file to the
+// real invocation. NULLBENCH_STUB_ECHO_SYSTEM_PROMPT closes that: the stub reads back
+// whatever --append-system-prompt-file pointed at and echoes it, landing in the raw
+// reply file main() writes to disk.
+test("SKILLDIR: the system prompt actually reaching the CLI starts with the Base directory line", async () => {
   const dir = makeSuite({ tasks: ALL });
   useSkillDir(dir, {
     "SKILL.md": "# demo skill\nAsk what a count leaves out before treating it as evidence.",
     "references/foo.md": "a reference file, loaded on demand, not injected wholesale",
   });
   useStub(dir, WORKING);
+  process.env.NULLBENCH_STUB_ECHO_SYSTEM_PROMPT = "1";
   const cap = capture();
-  const code = await main([dir, "--yes"], cap);
+  let code;
+  try {
+    code = await main([dir, "--yes"], cap);
+  } finally {
+    delete process.env.NULLBENCH_STUB_ECHO_SYSTEM_PROMPT;
+  }
   assert.equal(code, 0);
   assert.match(cap.text(), /CONFIRMATORY/, "a clean skill_dir run must still confirm");
+
+  const reportMatch = /Report: (.+report\.md)/.exec(cap.text());
+  assert.ok(reportMatch, "main() must announce the report path");
+  const rawDir = join(reportMatch[1], "..", "raw");
+  const treatmentReply = readFileSync(join(rawDir, "sig__treatment__1.txt"), "utf8");
+  const systemPrompt = /<system-prompt>([\s\S]*?)<\/system-prompt>/.exec(treatmentReply)?.[1] ?? "";
+  assert.match(systemPrompt, /^Base directory for this skill: /, "the file the CLI actually received must start with the Base directory line");
+  assert.match(systemPrompt, /demo skill/, "and it must carry SKILL.md's own text");
+
+  const controlReply = readFileSync(join(rawDir, "sig__control__1.txt"), "utf8");
+  const controlSystemPrompt = /<system-prompt>([\s\S]*?)<\/system-prompt>/.exec(controlReply)?.[1] ?? "";
+  assert.equal(controlSystemPrompt, "", "control must never receive a system prompt file at all");
 });
 
 test("SKILLDIR: PATTERN_IN_SKILL fires on a pattern found only in a reference file, not SKILL.md", async () => {
