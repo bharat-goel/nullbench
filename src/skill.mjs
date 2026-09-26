@@ -176,19 +176,27 @@ export function hashSkill(skill) {
   return sha256(Buffer.from(canonicalJSON(manifest), "utf8"));
 }
 
-// Every text file the treatment arm can actually see: just SKILL.md for a single file,
-// every file under skill_dir for a directory -- an answer key can sit in a reference
-// file as easily as in SKILL.md. Requires hashSkill to have run first for a directory
-// skill (it populates skill.files); falls back to just mdFile if it hasn't, which is
-// only ever wrong for a directory skill whose files were never walked -- not a path any
-// caller takes, since loadRegistration always hashes before this is used. Unreadable or
+// Every file path the treatment arm can actually see: just SKILL.md for a single file,
+// every file under skill_dir for a directory. Requires hashSkill to have run first for
+// a directory skill (it populates skill.files); falls back to just mdFile if it hasn't,
+// which is only ever wrong for a directory skill whose files were never walked -- not a
+// path any caller takes, since loadRegistration always hashes before this is used.
+export function skillFilePaths(skill) {
+  return skill.kind === "dir" && skill.files
+    ? skill.files.map((p) => join(skill.root, p))
+    : [skill.mdFile];
+}
+
+// Every text file the treatment arm can actually see, concatenated -- an answer key can
+// sit in a reference file as easily as in SKILL.md. Used by pattern-drift, which checks
+// for a verifier pattern anywhere in the RAW text; frontmatter stripping (leakage.mjs's
+// job, per-file, via distinctiveTermsForSkill) does not apply here on purpose --
+// patternDrift never stripped it even for a single-file skill. Unreadable or
 // undecodable entries are skipped silently: this is a cross-check, not a correctness
 // gate.
 export function combinedSkillText(skill) {
-  const paths = skill.kind === "dir" && skill.files
-    ? skill.files.map((p) => join(skill.root, p))
-    : [skill.mdFile];
-  let out = "";
+  const paths = skillFilePaths(skill);
+  const parts = [];
   for (const p of paths) {
     // mdFile itself is let through unguarded -- an unreadable SKILL.md (a directory, in
     // one existing regression test) is a real problem the CLI's callers decide how to
@@ -196,10 +204,13 @@ export function combinedSkillText(skill) {
     // skill contributes are tolerated: a reference file can be binary or otherwise
     // undecodable without that being this cross-check's problem.
     if (p === skill.mdFile) {
-      out += "\n" + readFileSync(p, "utf8");
+      parts.push(readFileSync(p, "utf8"));
     } else {
-      try { out += "\n" + readFileSync(p, "utf8"); } catch { /* unreadable or binary, skip */ }
+      try { parts.push(readFileSync(p, "utf8")); } catch { /* unreadable or binary, skip */ }
     }
   }
-  return out;
+  // Joined BETWEEN files, not prefixed before each -- a leading "\n" broke every
+  // frontmatter-stripping consumer downstream (distinctiveTerms checks whether the
+  // string's own first line is "---"; prefixing one made the first line "" instead).
+  return parts.join("\n");
 }

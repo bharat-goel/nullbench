@@ -8,8 +8,8 @@ import { runCanaries, loadCanaries } from "./judge.mjs";
 import { classify } from "./classify.mjs";
 import { aggregate, renderReport } from "./report.mjs";
 import { appendEntry } from "./ledger.mjs";
-import { distinctiveTerms, scanControlLeakage } from "./leakage.mjs";
-import { combinedSkillText } from "./skill.mjs";
+import { distinctiveTermsForSkill, scanControlLeakage } from "./leakage.mjs";
+import { combinedSkillText, skillFilePaths } from "./skill.mjs";
 
 // A value-taking flag in final position reads `undefined` and used to fall back to the
 // registered value in silence -- `nullbench . --model` ran the registered model and said
@@ -265,7 +265,15 @@ export async function main(argv, { stdout = process.stdout, stdin = process.stdi
   let md = `# nullbench report — ${klass}\n\n(report rendering failed; see records.json)\n`;
   const warnings = [];
   try {
-    const terms = distinctiveTerms(combinedSkillText(skill));
+    // combinedSkillText's return value isn't used here -- distinctiveTermsForSkill
+    // re-reads every file itself, per-file, so frontmatter stripping isn't lost the way
+    // concatenating first would lose it (only the first file's frontmatter would ever
+    // strip). It's still called for its side effect: it's the one thing left that lets
+    // an unreadable SKILL.md itself (a directory, in an existing regression test) throw
+    // here rather than being silently absorbed -- distinctiveTermsForSkill tolerates a
+    // bad path on any OTHER file in skill_dir, same as combinedSkillText does.
+    combinedSkillText(skill);
+    const terms = distinctiveTermsForSkill(skillFilePaths(skill));
     const leak = scanControlLeakage({ rawDir: join(outDir, "raw"), terms });
     if (leak.suspicious) {
       warnings.push(

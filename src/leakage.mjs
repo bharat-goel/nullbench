@@ -85,6 +85,27 @@ export function distinctiveTerms(skillText, limit = 12) {
   return [...phrases, ...singles].slice(0, limit);
 }
 
+// distinctiveTerms strips frontmatter ONLY off the very start of the string it's given.
+// For a single-file skill that's exactly right -- one document, one possible
+// frontmatter block. For a directory skill it isn't: concatenating every file's raw
+// text first (as combinedSkillText does, for pattern-drift's different purpose) means
+// only the FIRST file's frontmatter -- whichever sorts first -- ever gets stripped, and
+// any other file's own frontmatter leaks straight into the term list. Calling
+// distinctiveTerms per file and merging keeps every file's stripping independent, and
+// for a single-file skill (exactly one path in, from skill.mjs's skillFilePaths) it
+// reduces to exactly the pre-skill_dir call, term for term -- which is what the cobra
+// regression test pins. Takes a plain path list rather than a skill descriptor so this
+// module doesn't need to import skill.mjs (which already imports FORBIDDEN from here).
+export function distinctiveTermsForSkill(paths, limit = 12) {
+  const terms = new Set();
+  for (const p of paths) {
+    let text;
+    try { text = readFileSync(p, "utf8"); } catch { continue; } // unreadable or binary, skip
+    for (const t of distinctiveTerms(text, limit)) terms.add(t);
+  }
+  return [...terms];
+}
+
 export function scanControlLeakage({ rawDir, terms, threshold = 0.5 }) {
   if (!existsSync(rawDir) || terms.length === 0) return { checked: 0, hits: 0, rate: 0, suspicious: false };
   // Match only files with the exact shape: *__control__<digits>.txt
