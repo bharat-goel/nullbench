@@ -15,14 +15,10 @@ import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { canonicalJSON } from "./canonical.mjs";
+import { resolveSkill, hashSkill } from "./skill.mjs";
 
-export class RegistrationError extends Error {
-  constructor(problems) {
-    super(`registration is not executable:\n  - ${problems.join("\n  - ")}`);
-    this.name = "RegistrationError";
-    this.problems = problems;
-  }
-}
+export { RegistrationError } from "./errors.mjs";
+import { RegistrationError } from "./errors.mjs";
 
 const KINDS = new Set(["signal", "harm"]);
 const PREDICTIONS = new Set(["helps", "no-effect", "harms"]);
@@ -48,6 +44,9 @@ export function loadRegistration(dir, skillFile = null) {
   }
   if (!Number.isInteger(raw.reps) || raw.reps < 1) problems.push(`"reps" must be a positive integer`);
   if (!Array.isArray(raw.tasks) || raw.tasks.length === 0) problems.push(`"tasks" must be a non-empty array`);
+  if (raw.skill_dir !== undefined && (typeof raw.skill_dir !== "string" || !raw.skill_dir)) {
+    problems.push(`"skill_dir" must be a non-empty string`);
+  }
 
   if (problems.length) throw new RegistrationError(problems);
 
@@ -98,18 +97,18 @@ export function loadRegistration(dir, skillFile = null) {
     drift.push({ code: "NO_HARM_TASK", detail: "no harm task; a suite with no negative control cannot be confirmatory" });
   }
 
-  // SKILL.md is the experiment's independent variable -- the single thing that differs
+  // The skill is the experiment's independent variable -- the single thing that differs
   // between the arms -- and leaving it out of H meant editing it between registration and
   // run changed nothing about the stamp, and `--skill elsewhere/SKILL.md` produced a
   // CONFIRMATORY report under the same H as the registered run. A hash that claims to
-  // name what really ran has to cover it. `null` when the file is absent or unreadable:
-  // that is a structural failure the CLI rejects before spending anything, and hashing it
-  // as a distinct value keeps "no skill" from colliding with any real skill.
-  const skillPath = skillFile ?? join(dir, "SKILL.md");
-  let skillSha = null;
-  try {
-    skillSha = sha256(readFileSync(skillPath));
-  } catch { /* absent or unreadable; the CLI's structural check reports it */ }
+  // name what really ran has to cover it. `resolveSkill` picks a single SKILL.md
+  // (unchanged shape, so H does not move for a registration with no skill_dir) or a
+  // skill_dir, whose every file -- not only SKILL.md -- is covered by hashSkill's
+  // manifest. null when absent or unreadable: that is a structural failure the CLI
+  // rejects before spending anything, and hashing it as a distinct value keeps "no
+  // skill" from colliding with any real skill.
+  const skill = resolveSkill(dir, { override: skillFile, skillDir: raw.skill_dir });
+  const skillSha = hashSkill(skill);
 
   // Hashed over actual contents, not declared ones, so the hash names what really ran.
   const body = canonicalJSON({
@@ -119,7 +118,7 @@ export function loadRegistration(dir, skillFile = null) {
   });
   const hash = sha256(Buffer.from(body, "utf8"));
 
-  return { config: { model: raw.model, judge_model: raw.judge_model, reps: raw.reps }, tasks, hash, drift };
+  return { config: { model: raw.model, judge_model: raw.judge_model, reps: raw.reps }, tasks, hash, drift, skill };
 }
 
 // Verifier patterns lifted verbatim out of SKILL.md.

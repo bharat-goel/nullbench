@@ -158,6 +158,63 @@ test("the registration hash covers SKILL.md, not just the task files", () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
+// Regression pin: computed on the pre-skill_dir code (see nullbench-skilldir-report.md).
+// If this ever changes, the skill_dir refactor moved H for a registration that never
+// mentions skill_dir at all -- exactly what item 1 of the brief forbids.
+test("skill_dir absent: H is byte-identical to the pinned pre-skill_dir value", () => {
+  const dir = mkdtempSync(join(tmpdir(), "nb-pin-"));
+  mkdirSync(join(dir, "tasks"));
+  const signal = JSON.stringify({ id: "sig", skill: "demo", kind: "signal", prompt: "Is 3 caught enough?", verify: { type: "any", patterns: ["denominator"] } });
+  writeFileSync(join(dir, "tasks", "sig.json"), signal);
+  const harm = JSON.stringify({ id: "harm", skill: "demo", kind: "harm", prompt: "B-tree vs GIN?", verify: { type: "none", patterns: ["goodhart"], maxWords: 500 } });
+  writeFileSync(join(dir, "tasks", "harm.json"), harm);
+  const tasks = [
+    { id: "sig", file: "tasks/sig.json", sha256: sha(signal), kind: "signal", predict: "helps" },
+    { id: "harm", file: "tasks/harm.json", sha256: sha(harm), kind: "harm", predict: "no-effect" },
+  ];
+  writeFileSync(join(dir, "nullbench.json"), JSON.stringify({ model: "sonnet", judge_model: "sonnet", reps: 10, tasks }, null, 2));
+  writeFileSync(join(dir, "SKILL.md"), "# demo skill\npinned regression fixture, do not change bytes\n");
+  assert.equal(loadRegistration(dir).hash, "0d8eca81ab61b751450b911d056eab3b56c297af3b033908a5e724950e734ab1");
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("skill_dir present: the registration hash covers every file in it, not only SKILL.md", () => {
+  const dir = mkdtempSync(join(tmpdir(), "nb-skilldir-"));
+  mkdirSync(join(dir, "tasks"));
+  const body = JSON.stringify({ id: "t", prompt: "p", verify: { type: "any", patterns: ["x"] } });
+  writeFileSync(join(dir, "tasks", "t.json"), body);
+  writeFileSync(join(dir, "nullbench.json"), JSON.stringify({
+    model: "sonnet", judge_model: "sonnet", reps: 4, skill_dir: "skill",
+    tasks: [{ id: "t", file: "tasks/t.json", sha256: sha(body), kind: "harm", predict: "no-effect" }],
+  }));
+  mkdirSync(join(dir, "skill"));
+  writeFileSync(join(dir, "skill", "SKILL.md"), "# demo\nsee references/foo.md");
+  mkdirSync(join(dir, "skill", "references"));
+  writeFileSync(join(dir, "skill", "references", "foo.md"), "reference content");
+
+  const before = loadRegistration(dir).hash;
+  writeFileSync(join(dir, "skill", "references", "foo.md"), "changed reference content");
+  const after = loadRegistration(dir).hash;
+  assert.notEqual(before, after, "editing a reference file, not SKILL.md itself, must move H");
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("skill_dir present: a missing SKILL.md inside it is reported like today's missing-skill case", () => {
+  const dir = mkdtempSync(join(tmpdir(), "nb-skilldir-nomd-"));
+  mkdirSync(join(dir, "tasks"));
+  const body = JSON.stringify({ id: "t", prompt: "p", verify: { type: "any", patterns: ["x"] } });
+  writeFileSync(join(dir, "tasks", "t.json"), body);
+  writeFileSync(join(dir, "nullbench.json"), JSON.stringify({
+    model: "sonnet", judge_model: "sonnet", reps: 4, skill_dir: "skill",
+    tasks: [{ id: "t", file: "tasks/t.json", sha256: sha(body), kind: "harm", predict: "no-effect" }],
+  }));
+  mkdirSync(join(dir, "skill")); // no SKILL.md inside
+  const r = loadRegistration(dir);
+  assert.equal(r.skill.kind, "dir");
+  assert.equal(r.hash, loadRegistration(dir).hash, "still loads; the CLI's own existence check reports the absence");
+  rmSync(dir, { recursive: true, force: true });
+});
+
 test("a malformed task entry is a RegistrationError, not a TypeError escaping as exit 1", () => {
   const dir = mkdtempSync(join(tmpdir(), "nb-badtask-"));
   writeFileSync(join(dir, "SKILL.md"), "# s\n");
