@@ -10,7 +10,7 @@
 // English, and it cannot detect the model knowing the skill from its installed copy or
 // from training. It raises a question; it never answers one.
 
-import { readdirSync, readFileSync, existsSync } from "node:fs";
+import { readdirSync, readFileSync, existsSync, statSync } from "node:fs";
 import { join, resolve, relative, isAbsolute } from "node:path";
 
 // Exported so skill.mjs can refuse the same names at any depth inside skill_dir --
@@ -18,6 +18,36 @@ import { join, resolve, relative, isAbsolute } from "node:path";
 // subdirectory, so "top level only" isn't a safe boundary for a directory that gets
 // copied wholesale into the treatment sandbox.
 export const FORBIDDEN = ["CLAUDE.md", "CLAUDE.local.md", ".claude", "skills", "AGENTS.md"];
+
+// `skills` is checked unconditionally the same way every other FORBIDDEN name is,
+// EXCEPT that a top-level `skills` directory containing no file named SKILL.md at any
+// depth (case-insensitive) is allowed. Claude Code loads project skills from
+// `.claude/skills`, never from a top-level `skills/`, so a `skills/` tree with no
+// SKILL.md anywhere beneath it holds no skill -- it cannot be the channel the original
+// leak (FAILURES.md entry 5) was about. This matters for a real third-party eval fixture
+// whose byte-identical prompt names a path under `skills/<name>/...` that is just a
+// fixture file, not an installed skill. A `skills` entry that is not a directory at all
+// (a plain file, however unlikely) is refused unconditionally, same as before.
+function hasSkillMdBeneath(absDir) {
+  let entries;
+  try {
+    entries = readdirSync(absDir, { withFileTypes: true });
+  } catch {
+    // Unreadable: treat conservatively as "could hold a skill" rather than silently
+    // allowing it through.
+    return true;
+  }
+  for (const e of entries) {
+    const child = join(absDir, e.name);
+    if (e.isSymbolicLink()) continue; // not followed; not a plain file or directory either
+    if (e.isFile()) {
+      if (e.name.toLowerCase() === "skill.md") return true;
+    } else if (e.isDirectory()) {
+      if (hasSkillMdBeneath(child)) return true;
+    }
+  }
+  return false;
+}
 
 export function assertIsolated(cwd, repoRoot) {
   const problems = [];
@@ -34,7 +64,14 @@ export function assertIsolated(cwd, repoRoot) {
     }
   }
   for (const name of FORBIDDEN) {
-    if (existsSync(join(abs, name))) problems.push(`sandbox contains ${name}, which the control arm must not see`);
+    const p = join(abs, name);
+    if (!existsSync(p)) continue;
+    if (name === "skills") {
+      let isDir = false;
+      try { isDir = statSync(p).isDirectory(); } catch { /* fall through to refusal below */ }
+      if (isDir && !hasSkillMdBeneath(p)) continue; // no SKILL.md anywhere beneath: not a skill, allowed
+    }
+    problems.push(`sandbox contains ${name}, which the control arm must not see`);
   }
   return { ok: problems.length === 0, problems };
 }

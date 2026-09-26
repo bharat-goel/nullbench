@@ -39,13 +39,62 @@ test("the sandbox cannot be the repository root itself", () => {
 });
 
 test("the exact files that caused the original leak are detected", () => {
-  for (const name of ["CLAUDE.md", ".claude", "skills"]) {
+  for (const name of ["CLAUDE.md", ".claude"]) {
     const dir = mkdtempSync(join(tmpdir(), "nb-iso-"));
     if (name === "CLAUDE.md") writeFileSync(join(dir, name), "# project");
     else mkdirSync(join(dir, name));
     const r = assertIsolated(dir, "/elsewhere");
     assert.equal(r.ok, false, `${name} should break isolation`);
     assert.ok(r.problems.some((p) => p.includes(name)));
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// A real third-party eval fixture (skill-audit Task 5, otel-go) names a path under
+// `skills/otel-go/...` in its byte-identical prompt. assertIsolated used to refuse ANY
+// top-level `skills` entry unconditionally -- correct for the original leak (an
+// installed skill directory sitting where the control arm could read it), wrong for a
+// fixture whose `skills/` holds no skill at all, just a file the prompt happens to
+// name at that path. Claude Code loads project skills from `.claude/skills`, never
+// from a top-level `skills/`, so a `skills/` tree with no `SKILL.md` anywhere beneath
+// it cannot be what the original leak was about.
+test("a top-level skills/ with no SKILL.md anywhere beneath it is isolated", () => {
+  const dir = mkdtempSync(join(tmpdir(), "nb-iso-skills-"));
+  mkdirSync(join(dir, "skills", "otel-go", "evals", "files"), { recursive: true });
+  writeFileSync(join(dir, "skills", "otel-go", "evals", "files", "go-v145-upgrade.md"), "# fixture file, not a skill");
+  const r = assertIsolated(dir, "/elsewhere");
+  assert.equal(r.ok, true, `problems: ${r.problems.join("; ")}`);
+  assert.deepEqual(r.problems, []);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("skills/x/SKILL.md is still refused", () => {
+  const dir = mkdtempSync(join(tmpdir(), "nb-iso-skills-"));
+  mkdirSync(join(dir, "skills", "x"), { recursive: true });
+  writeFileSync(join(dir, "skills", "x", "SKILL.md"), "# a real skill");
+  const r = assertIsolated(dir, "/elsewhere");
+  assert.equal(r.ok, false);
+  assert.ok(r.problems.some((p) => p.includes("skills")));
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("skills/x/skill.md is refused case-insensitively", () => {
+  const dir = mkdtempSync(join(tmpdir(), "nb-iso-skills-"));
+  mkdirSync(join(dir, "skills", "x"), { recursive: true });
+  writeFileSync(join(dir, "skills", "x", "skill.md"), "# a real skill, oddly cased");
+  const r = assertIsolated(dir, "/elsewhere");
+  assert.equal(r.ok, false);
+  assert.ok(r.problems.some((p) => p.includes("skills")));
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("CLAUDE.md, CLAUDE.local.md, .claude and AGENTS.md stay refused unconditionally, even with no skills/ present", () => {
+  for (const name of ["CLAUDE.md", "CLAUDE.local.md", ".claude", "AGENTS.md"]) {
+    const dir = mkdtempSync(join(tmpdir(), "nb-iso-unc-"));
+    if (name === ".claude") mkdirSync(join(dir, name));
+    else writeFileSync(join(dir, name), "# project");
+    const r = assertIsolated(dir, "/elsewhere");
+    assert.equal(r.ok, false, `${name} must still be refused unconditionally`);
     rmSync(dir, { recursive: true, force: true });
   }
 });
