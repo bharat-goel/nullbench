@@ -5,7 +5,7 @@
 // outside the repository with --setting-sources project, so neither arm can see the
 // installed skills, the repository, or its CLAUDE.md.
 
-import { mkdtempSync, mkdirSync, writeFileSync, cpSync, rmSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, cpSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { invoke } from "./claude.mjs";
@@ -62,6 +62,17 @@ function makeCwd(task, fixtureRoot, repoRoot) {
   return dir;
 }
 
+// Mirrors what Claude Code itself prints when a skill loads: a "Base directory" line
+// naming where its reference files actually live THIS run (the sandbox, not the
+// skill_dir's original location -- a script inside the skill would resolve relative
+// paths against the former), a blank line, then SKILL.md's own text unchanged. Pure and
+// exported so the "starts with the Base directory line" requirement is a plain unit
+// test rather than something recovered from a sandbox that gets rmSync'd before any
+// test could look at it.
+export function renderSkillSystemPrompt({ skillRoot, mdText }) {
+  return `Base directory for this skill: ${skillRoot}\n\n${mdText}`;
+}
+
 export function gradedCounts(records) {
   const out = {};
   for (const r of records) {
@@ -75,6 +86,12 @@ export async function runSuite({
   registration, requested, skillFile, fixtureRoot = ".", repoRoot = fixtureRoot, rawDir = null,
   concurrency = 4, onProgress = () => {},
 }) {
+  // skillFile is either a bare path -- today's single-file shape, and what every
+  // existing caller of runSuite still passes -- or a resolved skill descriptor from
+  // prereg.mjs's resolveSkill ({kind: "file"|"dir", mdFile, root?, files?}). Normalizing
+  // once here means the worker below never has to care which one it got, and no
+  // existing call site had to change.
+  const skill = typeof skillFile === "string" ? { kind: "file", mdFile: skillFile } : skillFile;
   // A preflight probe, and nothing else. No run executes here any more -- every
   // invocation gets its own sandbox from makeCwd. What this still buys is failing
   // before a single CLI call is paid for when the temp directory itself is unusable:
@@ -110,9 +127,29 @@ export async function runSuite({
       const cwd = makeCwd(task, fixtureRoot, repoRoot);
       let v;
       try {
+        // Treatment differs from control in exactly one respect (PROTOCOL.md §7):
+        // control never sees any of this. A single-file skill's system prompt file is
+        // just its own path, unchanged from before skill_dir existed. A directory skill
+        // additionally gets copied into <sandbox>/skill/ -- so a skill whose method
+        // reads its own reference files on demand can actually find them -- and its
+        // system prompt is a fresh per-run file (the Base-directory line has to name
+        // THIS sandbox, which differs every run) written inside the sandbox and
+        // destroyed with it in the `finally` below, same as everything else here.
+        let systemPromptFile = null;
+        if (cond === "treatment") {
+          if (skill.kind === "dir") {
+            const skillRoot = join(cwd, "skill");
+            cpSync(skill.root, skillRoot, { recursive: true });
+            const mdText = readFileSync(skill.mdFile, "utf8");
+            systemPromptFile = join(cwd, ".nullbench-system-prompt.md");
+            writeFileSync(systemPromptFile, renderSkillSystemPrompt({ skillRoot, mdText }));
+          } else {
+            systemPromptFile = skill.mdFile;
+          }
+        }
         const { out, err, code } = await invoke({
           prompt: task.spec.prompt,
-          systemPromptFile: cond === "treatment" ? skillFile : null,
+          systemPromptFile,
           cwd, model: requested.model,
         });
 

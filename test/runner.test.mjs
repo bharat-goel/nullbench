@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync, readFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { runSuite, gradedCounts } from "../src/runner.mjs";
+import { runSuite, gradedCounts, renderSkillSystemPrompt } from "../src/runner.mjs";
 
 const STUB = fileURLToPath(new URL("../tools/stub-claude.mjs", import.meta.url));
 
@@ -283,6 +283,50 @@ test("a rejecting runSuite call does not leak the shared sandbox on disk", async
     else process.env.TMPDIR = prevTmpdir;
     rmSync(isolatedTmp, { recursive: true, force: true });
   }
+});
+
+// renderSkillSystemPrompt is a pure function specifically so this requirement is a plain
+// unit test -- the actual file it builds lives inside a per-run sandbox that is rmSync'd
+// before a test could ever inspect it.
+test("renderSkillSystemPrompt starts with the Base directory line, then a blank line, then SKILL.md text", () => {
+  const out = renderSkillSystemPrompt({ skillRoot: "/tmp/sandbox-abc/skill", mdText: "# demo\nbody text" });
+  const lines = out.split("\n");
+  assert.equal(lines[0], "Base directory for this skill: /tmp/sandbox-abc/skill");
+  assert.equal(lines[1], "");
+  assert.match(out, /# demo\nbody text$/);
+});
+
+test("skill_dir treatment: the sandbox gets skill/ with every file; control gets none of it", async () => {
+  const dir = env({ default: { outs: ["a reply"] } });
+  mkdirSync(join(dir, "skill"));
+  writeFileSync(join(dir, "skill", "SKILL.md"), "# demo skill");
+  mkdirSync(join(dir, "skill", "references"));
+  writeFileSync(join(dir, "skill", "references", "foo.md"), "reference content");
+
+  const raw = join(dir, "raw");
+  process.env.NULLBENCH_STUB_ECHO_CWD = "1";
+  let records;
+  try {
+    ({ records } = await runSuite({
+      registration, requested,
+      skillFile: { kind: "dir", root: join(dir, "skill"), mdFile: join(dir, "skill", "SKILL.md") },
+      rawDir: raw, concurrency: 1,
+    }));
+  } finally {
+    delete process.env.NULLBENCH_STUB_ECHO_CWD;
+  }
+  assert.equal(records.length, 8);
+  const treatmentFiles = readdirSync(raw).filter((f) => f.includes("__treatment__"));
+  const controlFiles = readdirSync(raw).filter((f) => f.includes("__control__"));
+  for (const f of treatmentFiles) {
+    const text = readFileSync(join(raw, f), "utf8");
+    assert.match(text, /<cwd-files>.*skill.*<\/cwd-files>/, `${f}: treatment sandbox must contain skill/`);
+  }
+  for (const f of controlFiles) {
+    const text = readFileSync(join(raw, f), "utf8");
+    assert.doesNotMatch(text, /<cwd-files>.*skill.*<\/cwd-files>/, `${f}: control sandbox must not see any skill file`);
+  }
+  clean(dir);
 });
 
 test("gradedCounts reports per-arm graded totals", () => {
