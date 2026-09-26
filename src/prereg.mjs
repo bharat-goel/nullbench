@@ -134,7 +134,17 @@ export function loadRegistration(dir, skillFile = null) {
   });
   const hash = sha256(Buffer.from(body, "utf8"));
 
-  return { config: { model: raw.model, judge_model: raw.judge_model, reps: raw.reps }, tasks, hash, drift, skill };
+  // Kept separate from `skill` (the resolved descriptor for THIS run) because an
+  // override always resolves to kind:"file" regardless of what was registered --
+  // `skill.kind` alone can never tell classify.mjs "this suite registered a skill_dir"
+  // once --skill is in play. `registeredSkillDir` answers a different, narrower
+  // question: what does nullbench.json itself declare, independent of any override.
+  const registeredSkillDir = typeof raw.skill_dir === "string" ? raw.skill_dir : null;
+
+  return {
+    config: { model: raw.model, judge_model: raw.judge_model, reps: raw.reps },
+    tasks, hash, drift, skill, registeredSkillDir,
+  };
 }
 
 // Verifier patterns lifted verbatim out of SKILL.md.

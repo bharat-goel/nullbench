@@ -292,6 +292,29 @@ test("SKILL OVERRIDE: --skill swaps the thing under test and cannot be confirmat
 
 // skill_dir end-to-end wiring, item by item against nullbench-skilldir-brief.md.
 
+// N4 (fix round 2): resolveSkill(dir, {override}) always returns kind:"file" for an
+// override -- correct, --skill is always a single file -- but classify.mjs used the
+// RESOLVED skill's kind to decide whether to say "registered skill_dir" or "registered
+// SKILL.md", so that branch could never fire for a skill_dir suite: with an override
+// present, registration.skill.kind is always "file" regardless of what was actually
+// registered. Tested through loadRegistration + classify's real inputs (a real
+// skill_dir suite, a real --skill run), not a hand-built registration object standing
+// in for one.
+test("SKILL OVERRIDE: on a skill_dir suite, the reason names skill_dir, not SKILL.md", async () => {
+  const dir = makeSuite({ tasks: ALL });
+  useSkillDir(dir, { "SKILL.md": "# demo skill\nAsk what a count leaves out." });
+  const other = join(dir, "other-skill.md");
+  writeFileSync(other, "# a different skill\nSomething else entirely.");
+  useStub(dir, { default: { outs: ["a plain reply"] } });
+
+  const cap = capture();
+  const code = await main([dir, "--yes", "--skill", other], cap);
+  assert.equal(code, 0);
+  assert.match(cap.text(), /EXPLORATORY/);
+  assert.match(cap.text(), /registered skill_dir/, "the reason must name skill_dir, since that's what was actually registered");
+  assert.doesNotMatch(cap.text(), /registered SKILL\.md/);
+});
+
 test("SKILLDIR: treatment sees skill/ on disk; system prompt starts with the Base directory line", async () => {
   const dir = makeSuite({ tasks: ALL });
   useSkillDir(dir, {

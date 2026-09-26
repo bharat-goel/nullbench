@@ -47,7 +47,11 @@ export function classify({ registration, requested, gradedCounts, canaryOk }) {
     reasons.push(`judge model differs: registered ${registration.config.judge_model}, ran ${requested.judgeModel}`);
   }
   if (requested.skillOverride) {
-    const registered = registration.skill?.kind === "dir" ? "registered skill_dir" : "registered SKILL.md in the suite directory";
+    // registration.skill.kind cannot answer this: an override always resolves to
+    // kind:"file" (--skill is always a single file), so that would say "SKILL.md" even
+    // for a suite that registered a skill_dir. registeredSkillDir answers what
+    // nullbench.json itself declared, independent of what actually ran.
+    const registered = registration.registeredSkillDir ? "registered skill_dir" : "registered SKILL.md in the suite directory";
     reasons.push(`skill differs: ${registered}, ran ${requested.skillOverride}`);
   }
   if (canaryOk === false) reasons.push("judge canaries misgraded; judged tasks cannot be confirmed");
