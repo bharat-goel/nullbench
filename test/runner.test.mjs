@@ -329,6 +329,47 @@ test("skill_dir treatment: the sandbox gets skill/ with every file; control gets
   clean(dir);
 });
 
+test("the judge never runs in the subject's sandbox, in either arm", async () => {
+  // A judged task in a skill_dir suite: the subject's treatment sandbox holds skill/ and
+  // the system prompt file. If the judge call reused that sandbox (the CRITICAL bug this
+  // pins), an unrestricted judge invocation could read skill/references/* straight off
+  // disk -- the exact channel FAILURES.md entry 1 exists to close, reopened one level up.
+  const dir = env({
+    rules: [{ promptIncludes: "RUBRIC", arm: "any", outs: ["VERDICT: PASS\nREASON: fine"] }],
+    default: { outs: ["a reply"] },
+  });
+  mkdirSync(join(dir, "skill"));
+  writeFileSync(join(dir, "skill", "SKILL.md"), "# demo skill");
+  const judged = {
+    ...registration,
+    tasks: [{
+      id: "jg", kind: "signal", predict: "helps",
+      spec: { id: "jg", prompt: "judge me", verify: { type: "judge", rubric: "RUBRIC" } },
+    }],
+  };
+  const raw = join(dir, "raw");
+  process.env.NULLBENCH_STUB_ECHO_CWD = "1";
+  let records;
+  try {
+    ({ records } = await runSuite({
+      registration: judged, requested: { ...requested, taskIds: ["jg"] },
+      skillFile: { kind: "dir", root: join(dir, "skill"), mdFile: join(dir, "skill", "SKILL.md") },
+      rawDir: raw, concurrency: 1,
+    }));
+  } finally {
+    delete process.env.NULLBENCH_STUB_ECHO_CWD;
+  }
+  assert.ok(records.every((r) => r.pass));
+  const judgeFiles = readdirSync(raw).filter((f) => f.includes("__judge"));
+  assert.ok(judgeFiles.length === 8, "one captured judge call per run, both arms");
+  for (const f of judgeFiles) {
+    const text = readFileSync(join(raw, f), "utf8");
+    assert.doesNotMatch(text, /<cwd-files>[^<]*skill/,
+      `${f}: the judge's own sandbox must not contain skill/ or the prompt file`);
+  }
+  clean(dir);
+});
+
 test("gradedCounts reports per-arm graded totals", () => {
   const recs = [
     { task: "a", cond: "control", pass: true, failed: false },

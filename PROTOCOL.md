@@ -443,25 +443,31 @@ point-in-time, so anything a run creates afterwards is visible to every later ru
 other arm, with no error and no change of class.
 
 The subject is invoked with no tool-restriction flags at all -- `src/claude.mjs` carries
-`SUBJECT_DISALLOWED_TOOLS` unused, deliberately, with the reasoning in a comment there: a
-task that hands the model a real failing test suite and grades whether it finds the bug
-needs Bash/Write/Edit to do that, and cobra's own published numbers were measured with no
-tool restriction, so restricting here would make the worked example non-comparable to the
-figures it exists to reproduce.
+`SUBJECT_DISALLOWED_TOOLS` unused, deliberately. Its comment explains why an earlier
+review recommended denying Write/Edit/Bash and this project didn't: cobra's
+`ic-agent-under-pressure` task hands the model a real failing test suite and grades
+whether it finds the bug, which *wants* those tools, and cobra's own published numbers
+were measured with no tool restriction, so an explicit deny list here would make the
+worked example non-comparable to the figures it exists to reproduce.
 
-What actually keeps the subject from touching its cwd is headless mode itself: `-p` with
-`--setting-sources project` and no project settings present means any tool that would
-need interactive approval is refused by the CLI's own permission system before it runs,
-not by an explicit deny list. This has a consequence worth stating plainly: **a skill
-whose method depends on running a script is measured here without that script ever
-running.** If a skill's SKILL.md tells the model to invoke a helper program, the
-treatment arm reads that instruction and cannot act on it; the measured effect is
-whatever the instruction achieves through the model's own reasoning alone, not through
-the tool it names. A skill this project cannot measure fairly is exactly a skill whose
-value depends on that gap.
+It turns out not to matter either way, and this is worth stating plainly: headless mode
+itself already refuses any tool that would need interactive approval, before it runs,
+regardless of what the subject is invoked with. `-p` with `--setting-sources project` and
+no project settings present gives the CLI's own permission system nothing to approve
+against, so Write/Edit/Bash are refused by that system, not by a flag. The consequence is
+the same as if they'd been explicitly denied: **a skill whose method depends on running a
+script is measured here without that script ever running.** If a skill's SKILL.md tells
+the model to invoke a helper program, the treatment arm reads that instruction and cannot
+act on it; the measured effect is whatever the instruction achieves through the model's
+own reasoning alone, not through the tool it names. A skill this project cannot measure
+fairly is exactly a skill whose value depends on that gap.
 
-The judge is not restricted; it runs in the same per-run sandbox, which is destroyed
-with the run.
+The judge is not tool-restricted, but it never shares the subject's sandbox: it gets its
+own freshly `mkdtemp`'d, isolation-checked directory per call, destroyed immediately
+after. A shared sandbox would let an unrestricted judge invocation read whatever the
+subject's treatment run left behind -- in particular a directory skill's `skill/` copy --
+straight off disk, which is the exact channel the "never sees the skill" guarantee below
+exists to close.
 
 Before each run, the sandbox is checked:
 

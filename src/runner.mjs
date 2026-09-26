@@ -125,23 +125,27 @@ export async function runSuite({
       // Throws before the sandbox exists (missing fixture) or after cleaning it up
       // itself (failed isolation check) -- either way there is nothing to unwind here.
       const cwd = makeCwd(task, fixtureRoot, repoRoot);
+      // The system prompt file for a directory skill lives OUTSIDE every sandbox --
+      // subject's and judge's alike. It used to sit inside cwd, which meant the judge
+      // (invoked in the same cwd, see below) could read it straight off disk. A
+      // separate scratch directory, mkdtemp'd here and removed in this same `finally`,
+      // closes that regardless of what the judge sandbox itself does.
+      let promptScratch = null;
       let v;
       try {
         // Treatment differs from control in exactly one respect (PROTOCOL.md §7):
         // control never sees any of this. A single-file skill's system prompt file is
         // just its own path, unchanged from before skill_dir existed. A directory skill
         // additionally gets copied into <sandbox>/skill/ -- so a skill whose method
-        // reads its own reference files on demand can actually find them -- and its
-        // system prompt is a fresh per-run file (the Base-directory line has to name
-        // THIS sandbox, which differs every run) written inside the sandbox and
-        // destroyed with it in the `finally` below, same as everything else here.
+        // reads its own reference files on demand can actually find them.
         let systemPromptFile = null;
         if (cond === "treatment") {
           if (skill.kind === "dir") {
             const skillRoot = join(cwd, "skill");
             cpSync(skill.root, skillRoot, { recursive: true });
             const mdText = readFileSync(skill.mdFile, "utf8");
-            systemPromptFile = join(cwd, ".nullbench-system-prompt.md");
+            promptScratch = mkdtempSync(join(tmpdir(), "nullbench-sp-"));
+            systemPromptFile = join(promptScratch, "system-prompt.md");
             writeFileSync(systemPromptFile, renderSkillSystemPrompt({ skillRoot, mdText }));
           } else {
             systemPromptFile = skill.mdFile;
@@ -161,11 +165,24 @@ export async function runSuite({
           // batch print a tidy -13.3pp. FAILURES.md entry 8.
           v = { pass: false, failed: true, why: `run failed (exit ${code}): ${(out || err).slice(0, 80)}` };
         } else if (task.spec.verify.type === "judge") {
-          // The judge runs in this run's own sandbox, which is destroyed below. It is
-          // the one invocation here with no tool restrictions (see the report note),
-          // so giving it a directory nothing else will ever see is what keeps an
-          // unrestricted judge from being a cross-run channel.
-          v = await runJudge({ task: task.spec, reply: out, model: requested.judgeModel, cwd });
+          // The judge must NEVER share the subject's sandbox: in treatment that sandbox
+          // holds skill/ (and, briefly, above, the prompt scratch dir), and an
+          // unrestricted judge invocation could read straight off disk -- exactly the
+          // channel FAILURES.md entry 1 exists to close, reopened one level up if the
+          // judge ran here instead. A fresh, isolation-checked sandbox per judge call,
+          // destroyed immediately after, closes it regardless of what cwd holds.
+          const judgeCwd = mkdtempSync(join(tmpdir(), "nullbench-judge-"));
+          const judgeIso = assertIsolated(judgeCwd, repoRoot);
+          if (!judgeIso.ok) {
+            rmSync(judgeCwd, { recursive: true, force: true });
+            throw new Error(`judge sandbox is not isolated:\n  - ${judgeIso.problems.join("\n  - ")}`);
+          }
+          try {
+            v = await runJudge({ task: task.spec, reply: out, model: requested.judgeModel, cwd: judgeCwd });
+          } finally {
+            if (rawDir) writeFileSync(join(rawDir, `${name}__judge.txt`), v?.raw ?? "");
+            rmSync(judgeCwd, { recursive: true, force: true });
+          }
         } else {
           v = verify(task.spec.verify, out);
         }
@@ -173,6 +190,7 @@ export async function runSuite({
         records.push({ task: task.id, cond, rep, pass: v.pass, failed: !!v.failed, why: v.why });
         onProgress(++done, jobs.length, name, v.pass);
       } finally {
+        if (promptScratch) rmSync(promptScratch, { recursive: true, force: true });
         rmSync(cwd, { recursive: true, force: true });
       }
     }
