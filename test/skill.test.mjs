@@ -345,6 +345,40 @@ test("hashSkill refuses a symlink anywhere in skill_dir as a structural failure"
   rmSync(dir, { recursive: true, force: true });
 });
 
+// N5 (fix round 2): FORBIDDEN_NAMES.has(name) is a plain JS Set lookup against whatever
+// readdirSync happens to return -- exact-case string comparison, unaffected by the
+// filesystem's own case-insensitive LOOKUPS (which is a different thing: existsSync
+// finding "claude.md" when asked for "CLAUDE.md" doesn't change what readdirSync
+// reports the entry's name AS). "claude.md" (lowercase) and "CLAUDE.local.md" both need
+// their own refusal.
+test("hashSkill refuses a lowercase 'claude.md', not only the exact-case name", () => {
+  const dir = tmp();
+  mkdirSync(join(dir, "skill", "a"), { recursive: true });
+  writeFileSync(join(dir, "skill", "SKILL.md"), "# demo");
+  writeFileSync(join(dir, "skill", "a", "claude.md"), "# not allowed, whatever the case");
+  const skill = resolveSkill(dir, { skillDir: "skill" });
+  assert.throws(() => hashSkill(skill), (e) => {
+    assert.ok(e instanceof RegistrationError);
+    assert.match(e.message, /claude\.md/i);
+    return true;
+  });
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("hashSkill refuses CLAUDE.local.md, not only CLAUDE.md itself", () => {
+  const dir = tmp();
+  mkdirSync(join(dir, "skill", "a"), { recursive: true });
+  writeFileSync(join(dir, "skill", "SKILL.md"), "# demo");
+  writeFileSync(join(dir, "skill", "a", "CLAUDE.local.md"), "# a local override, still project config");
+  const skill = resolveSkill(dir, { skillDir: "skill" });
+  assert.throws(() => hashSkill(skill), (e) => {
+    assert.ok(e instanceof RegistrationError);
+    assert.match(e.message, /CLAUDE\.local\.md/);
+    return true;
+  });
+  rmSync(dir, { recursive: true, force: true });
+});
+
 test("combinedSkillText concatenates every file's text for a directory skill", () => {
   const dir = tmp();
   makeSkillDir(dir);

@@ -235,10 +235,14 @@ not a theoretical case: `cpSync` copies it AS a symlink, so `<sandbox>/skill` wo
 straight back at the original location outside the sandbox.) The same posture applies to
 anything in the tree that is neither a file nor a directory — a FIFO, socket, or device
 node — refused by `lstat` classification alone, before anything ever tries to open and
-read it. And `CLAUDE.md`, `AGENTS.md`, `.claude` or `skills` anywhere inside `skill_dir`,
-at any depth, are refused the same way `assertIsolated` refuses them at a sandbox's top
-level (§7) — Claude Code itself loads a nested `CLAUDE.md` or `.claude` when working in a
-subdirectory, so "top level only" is not a safe boundary for a directory copied in
+read it. And `CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md`, `.claude` or `skills` anywhere
+inside `skill_dir`, at any depth, and compared **case-insensitively** — `claude.md` and
+`Claude.MD` are refused exactly like `CLAUDE.md` itself, since a plain string match
+against whatever casing a directory entry happens to have on disk is not the same
+guarantee a case-insensitive filesystem's own lookups give elsewhere — are refused the
+same way `assertIsolated` refuses them at a sandbox's top level (§7) — Claude Code
+itself loads a nested `CLAUDE.md` or `.claude` when working in a subdirectory, so "top
+level only" is not a safe boundary for a directory copied in
 wholesale.
 
 Once `skill_dir`'s root has been confirmed to exist, any further problem reading it — a
@@ -545,7 +549,7 @@ Before each run, the sandbox is checked:
 - it must not be inside the repository root (found by walking up from the registration
   directory to the nearest `.git`, so a suite living in a subdirectory of a larger repo is
   still protected from that whole repo);
-- it must not contain `CLAUDE.md`, `.claude`, `skills`, or `AGENTS.md`.
+- it must not contain `CLAUDE.md`, `CLAUDE.local.md`, `.claude`, `skills`, or `AGENTS.md`.
 
 A failed check aborts the whole batch, not the one task: a sandbox that fails it means
 the environment is wrong, and every run in flight shares that environment.

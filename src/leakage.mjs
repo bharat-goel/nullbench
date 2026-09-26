@@ -17,7 +17,7 @@ import { join, resolve, relative, isAbsolute } from "node:path";
 // Claude Code itself loads a nested CLAUDE.md or .claude when working in a
 // subdirectory, so "top level only" isn't a safe boundary for a directory that gets
 // copied wholesale into the treatment sandbox.
-export const FORBIDDEN = ["CLAUDE.md", ".claude", "skills", "AGENTS.md"];
+export const FORBIDDEN = ["CLAUDE.md", "CLAUDE.local.md", ".claude", "skills", "AGENTS.md"];
 
 export function assertIsolated(cwd, repoRoot) {
   const problems = [];

@@ -11,7 +11,11 @@ import { RegistrationError } from "./errors.mjs";
 import { FORBIDDEN } from "./leakage.mjs";
 
 const sha256 = (buf) => createHash("sha256").update(buf).digest("hex");
-const FORBIDDEN_NAMES = new Set(FORBIDDEN);
+// Lowercased once, compared against the lowercased entry name -- readdirSync returns
+// whatever casing the entry actually has on disk, which a case-insensitive filesystem's
+// own lookup behaviour does nothing to normalize; a plain Set.has on the original
+// casing missed "claude.md" and "Claude.MD" entirely.
+const FORBIDDEN_NAMES = new Set(FORBIDDEN.map((n) => n.toLowerCase()));
 
 // Resolves every symlink AND canonicalizes case (on a case-insensitive filesystem, the
 // on-disk casing wins over whatever casing the caller typed) for the longest existing
@@ -121,7 +125,7 @@ function walkSkillDir(root, rel = "") {
     if (st.isSymbolicLink()) {
       throw new RegistrationError([`skill_dir contains a symlink at "${childRel}"; refused as a structural failure`]);
     }
-    if (FORBIDDEN_NAMES.has(name)) {
+    if (FORBIDDEN_NAMES.has(name.toLowerCase())) {
       throw new RegistrationError([`skill_dir contains "${name}" at "${childRel}"; refused as a structural failure -- it could change how the treatment arm's sandbox behaves beyond the skill itself`]);
     }
     if (st.isDirectory()) {
