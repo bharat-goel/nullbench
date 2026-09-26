@@ -13,7 +13,11 @@
 import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { join, resolve, relative, isAbsolute } from "node:path";
 
-const FORBIDDEN = ["CLAUDE.md", ".claude", "skills", "AGENTS.md"];
+// Exported so skill.mjs can refuse the same names at any depth inside skill_dir --
+// Claude Code itself loads a nested CLAUDE.md or .claude when working in a
+// subdirectory, so "top level only" isn't a safe boundary for a directory that gets
+// copied wholesale into the treatment sandbox.
+export const FORBIDDEN = ["CLAUDE.md", ".claude", "skills", "AGENTS.md"];
 
 export function assertIsolated(cwd, repoRoot) {
   const problems = [];

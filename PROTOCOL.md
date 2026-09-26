@@ -217,10 +217,26 @@ is refused as a structural failure (§1.2), the same posture as `assertIsolated`
 but a separate one — that check also runs against the treatment sandbox this project
 itself builds, and `skill/` belongs there.
 
-A symlink anywhere in `skill_dir` is refused as a structural failure rather than
-followed or ignored: it can point outside the directory entirely, which would make both
-the sandbox copy and the manifest hash below name something other than what a reader of
-`skill_dir` actually sees.
+A symlink anywhere in `skill_dir` — including the root itself — is refused as a
+structural failure rather than followed or ignored: it can point outside the directory
+entirely, which would make both the sandbox copy and the manifest hash below name
+something other than what a reader of `skill_dir` actually sees. (A symlinked root is
+not a theoretical case: `cpSync` copies it AS a symlink, so `<sandbox>/skill` would point
+straight back at the original location outside the sandbox.) The same posture applies to
+anything in the tree that is neither a file nor a directory — a FIFO, socket, or device
+node — refused by `lstat` classification alone, before anything ever tries to open and
+read it. And `CLAUDE.md`, `AGENTS.md`, `.claude` or `skills` anywhere inside `skill_dir`,
+at any depth, are refused the same way `assertIsolated` refuses them at a sandbox's top
+level (§7) — Claude Code itself loads a nested `CLAUDE.md` or `.claude` when working in a
+subdirectory, so "top level only" is not a safe boundary for a directory copied in
+wholesale.
+
+Once `skill_dir`'s root has been confirmed to exist, any further problem reading it — a
+walk error, or a single unreadable file among otherwise-good ones — is also a structural
+failure rather than a silent `null` hash. A registration whose H doesn't move when a file
+becomes unreadable would look exactly as confirmable as one where nothing changed; only
+the root being entirely absent still resolves to `null`, on the same footing as a missing
+single-file `SKILL.md`, because that is the CLI's own existence check to report.
 
 Absent `skill_dir`, behaviour is byte-identical to a suite that has never heard of it: a
 single `SKILL.md` beside the registration, injected exactly as before.

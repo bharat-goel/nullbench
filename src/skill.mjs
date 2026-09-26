@@ -8,8 +8,10 @@ import { join, resolve, relative, isAbsolute, sep } from "node:path";
 import { createHash } from "node:crypto";
 import { canonicalJSON } from "./canonical.mjs";
 import { RegistrationError } from "./errors.mjs";
+import { FORBIDDEN } from "./leakage.mjs";
 
 const sha256 = (buf) => createHash("sha256").update(buf).digest("hex");
+const FORBIDDEN_NAMES = new Set(FORBIDDEN);
 
 // True when `child` is `ancestor` itself or nested anywhere inside it, computed by
 // resolved path rather than string prefix (so "/a/b" is not mistaken for inside "/a/bc").
@@ -53,23 +55,40 @@ function validateSkillDirPath(dir, skillDir, protectedPaths) {
 }
 
 // Recursively lists every FILE under root as POSIX-relative paths (joined with "/"
-// regardless of platform, since these paths are hashed and must not vary by OS). A
-// symlink anywhere in the tree -- file or directory -- is refused outright rather than
-// followed: it can point outside skill_dir entirely, so a manifest hash over it would
-// not name what actually gets copied into the sandbox. Structural, like a missing task
-// file: exit 2, nothing spent.
+// regardless of platform, since these paths are hashed and must not vary by OS). Three
+// things are refused outright rather than followed or read, each a structural failure
+// like a missing task file (exit 2, nothing spent):
+//
+//   - a symlink anywhere in the tree -- it can point outside skill_dir entirely, so a
+//     manifest hash over it would not name what actually gets copied into the sandbox;
+//   - anything that is neither a file nor a directory (a FIFO, socket, or device node)
+//     -- lstat classifies it WITHOUT opening it, which is what keeps this from ever
+//     calling readFileSync on a FIFO with no writer and hanging forever;
+//   - CLAUDE.md, AGENTS.md, .claude or skills at ANY depth -- the same names
+//     assertIsolated refuses at a sandbox's top level, refused here too because Claude
+//     Code itself loads nested CLAUDE.md/.claude when working in a subdirectory, and a
+//     skill_dir copy is not inspected for whether its contents are actually dangerous
+//     any more than a fixture is (see makeCwd in runner.mjs).
 function walkSkillDir(root, rel = "") {
   const abs = join(root, rel);
   let out = [];
-  for (const name of readdirSync(abs).sort()) {
+  for (const name of readdirSync(abs)) {
     const childRel = rel ? `${rel}/${name}` : name;
     const childAbs = join(abs, name);
     const st = lstatSync(childAbs);
     if (st.isSymbolicLink()) {
       throw new RegistrationError([`skill_dir contains a symlink at "${childRel}"; refused as a structural failure`]);
     }
-    if (st.isDirectory()) out = out.concat(walkSkillDir(root, childRel));
-    else out.push(childRel);
+    if (FORBIDDEN_NAMES.has(name)) {
+      throw new RegistrationError([`skill_dir contains "${name}" at "${childRel}"; refused as a structural failure -- it could change how the treatment arm's sandbox behaves beyond the skill itself`]);
+    }
+    if (st.isDirectory()) {
+      out = out.concat(walkSkillDir(root, childRel));
+    } else if (st.isFile()) {
+      out.push(childRel);
+    } else {
+      throw new RegistrationError([`skill_dir contains a non-regular entry at "${childRel}" (not a file or directory); refused as a structural failure`]);
+    }
   }
   return out;
 }
@@ -92,26 +111,61 @@ export function resolveSkill(dir, { override = null, skillDir = null, protectedP
 
 // H must cover every byte the treatment arm actually sees. A single file hashes
 // directly -- unchanged from before skill_dir existed, so an absent-skill_dir
-// registration's H does not move. A directory hashes a sorted manifest of
-// {path, sha256} over every file in it, so editing any reference file -- not only
+// registration's H does not move; unreadable there still hashes to null (the CLI's own
+// existence check reports it), exactly as before this file existed.
+//
+// A directory is stricter, on purpose: once skill_dir's root demonstrably exists, ANY
+// problem reading it -- a symlinked root (cpSync would copy it AS a symlink, so
+// <sandbox>/skill would point outside the sandbox entirely), a walk error, or a single
+// unreadable file among otherwise-good ones -- throws RegistrationError rather than
+// quietly hashing to null. A null H that looks identical before and after someone broke
+// a file's permissions is worse than no H: the registration still LOOKS confirmable.
+// Only the root being entirely absent hashes to null, matching the single-file case,
+// because that is the CLI's own existence check to report.
+//
+// The manifest covers every file in it, so editing any reference file -- not only
 // SKILL.md -- moves H; a byte-identical rewrite (a no-op reformat that changes nothing)
-// does not, since the manifest is over bytes. Absent entirely hashes to null rather
-// than throwing: a missing skill is the CLI's own existence check to report, not this
-// function's job. `skill.files` is cached on the descriptor (relative paths) so
-// pattern-drift and leakage don't have to re-walk the directory.
+// does not, since the manifest is over bytes. `skill.files` is cached on the descriptor
+// (relative paths) so pattern-drift and leakage don't have to re-walk the directory.
 export function hashSkill(skill) {
-  try {
-    if (skill.kind === "dir") {
-      const files = walkSkillDir(skill.root);
-      const manifest = files.map((p) => ({ path: p, sha256: sha256(readFileSync(join(skill.root, p))) }));
-      skill.files = files;
-      return sha256(Buffer.from(canonicalJSON(manifest), "utf8"));
+  if (skill.kind !== "dir") {
+    try {
+      return sha256(readFileSync(skill.mdFile));
+    } catch {
+      return null; // absent or unreadable
     }
-    return sha256(readFileSync(skill.mdFile));
+  }
+
+  let rootStat;
+  try {
+    rootStat = lstatSync(skill.root);
+  } catch {
+    return null; // skill_dir's resolved location doesn't exist at all
+  }
+  if (rootStat.isSymbolicLink()) {
+    throw new RegistrationError([`skill_dir root "${skill.root}" is a symlink; refused as a structural failure`]);
+  }
+
+  let files;
+  try {
+    files = walkSkillDir(skill.root);
   } catch (e) {
     if (e instanceof RegistrationError) throw e;
-    return null; // absent or unreadable
+    throw new RegistrationError([`skill_dir could not be read: ${e.message}`]);
   }
+
+  const manifest = [];
+  for (const p of files) {
+    let bytes;
+    try {
+      bytes = readFileSync(join(skill.root, p));
+    } catch (e) {
+      throw new RegistrationError([`skill_dir file "${p}" could not be read: ${e.message}`]);
+    }
+    manifest.push({ path: p, sha256: sha256(bytes) });
+  }
+  skill.files = files;
+  return sha256(Buffer.from(canonicalJSON(manifest), "utf8"));
 }
 
 // Every text file the treatment arm can actually see: just SKILL.md for a single file,

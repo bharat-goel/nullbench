@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync, chmodSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, basename } from "node:path";
 import { resolveSkill, hashSkill, combinedSkillText } from "../src/skill.mjs";
@@ -185,6 +186,59 @@ test("hashSkill caches the file list on the descriptor for reuse", () => {
   const skill = resolveSkill(dir, { skillDir: "skill" });
   hashSkill(skill);
   assert.deepEqual(skill.files.sort(), ["SKILL.md", "references/foo.md"]);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("hashSkill refuses a symlinked skill_dir root, not just a symlink somewhere inside it", () => {
+  // cpSync copies a symlinked root AS a symlink, so <sandbox>/skill would point at the
+  // original directory outside the sandbox -- the walk previously lstat'd only the
+  // CHILDREN it iterated over, never the root passed in, so this slipped through.
+  const dir = tmp();
+  makeSkillDir(dir);
+  rmSync(join(dir, "skill"), { recursive: true, force: true });
+  mkdirSync(join(dir, "real-skill"));
+  writeFileSync(join(dir, "real-skill", "SKILL.md"), "# demo");
+  symlinkSync(join(dir, "real-skill"), join(dir, "skill"));
+  const skill = resolveSkill(dir, { skillDir: "skill" });
+  assert.throws(() => hashSkill(skill), (e) => {
+    assert.ok(e instanceof RegistrationError);
+    assert.match(e.message, /symlink/);
+    return true;
+  });
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("hashSkill throws (never returns null) on a read error inside an existing skill_dir", () => {
+  const dir = tmp();
+  makeSkillDir(dir);
+  chmodSync(join(dir, "skill", "references", "foo.md"), 0o000);
+  const skill = resolveSkill(dir, { skillDir: "skill" });
+  try {
+    assert.throws(() => hashSkill(skill), RegistrationError,
+      "an unreadable file inside an existing skill_dir must never silently hash to null");
+  } finally {
+    chmodSync(join(dir, "skill", "references", "foo.md"), 0o644); // so rmSync can clean up
+  }
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("hashSkill refuses a non-regular entry (FIFO) anywhere in skill_dir", { skip: process.platform === "win32" }, () => {
+  const dir = tmp();
+  makeSkillDir(dir);
+  execFileSync("mkfifo", [join(dir, "skill", "references", "a-fifo")]);
+  const skill = resolveSkill(dir, { skillDir: "skill" });
+  assert.throws(() => hashSkill(skill), (e) => {
+    assert.ok(e instanceof RegistrationError);
+    assert.match(e.message, /a-fifo/);
+    return true;
+  });
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("hashSkill returns null (not a throw) when skill_dir's root does not exist at all", () => {
+  const dir = tmp();
+  const skill = resolveSkill(dir, { skillDir: "no-such-dir" });
+  assert.equal(hashSkill(skill), null);
   rmSync(dir, { recursive: true, force: true });
 });
 

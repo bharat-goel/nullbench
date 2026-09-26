@@ -356,6 +356,23 @@ test("SKILLDIR: a fixture carrying a top-level `skill` entry is a structural fai
   assert.equal(existsSync(join(dir, "results")), false);
 });
 
+test("SKILLDIR: a nested CLAUDE.md inside skill_dir is a structural failure, not just a top-level one", async () => {
+  const dir = makeSuite({ tasks: ALL });
+  useSkillDir(dir, {
+    "SKILL.md": "# demo skill",
+    "references/foo.md": "ordinary reference content",
+  });
+  mkdirSync(join(dir, "skill", "nested"), { recursive: true });
+  writeFileSync(join(dir, "skill", "nested", "CLAUDE.md"), "# a nested project doc");
+  useStub(dir, { default: { outs: ["a plain reply"] } });
+
+  const cap = capture();
+  const code = await main([dir, "--dry-run"], cap);
+  assert.equal(code, 2, "a nested CLAUDE.md inside skill_dir must be structural");
+  assert.match(cap.text(), /CLAUDE\.md/);
+  assert.equal(existsSync(join(dir, "results")), false);
+});
+
 test("PREFLIGHT: a task declaring a fixture that does not exist fails the dry run, before any spend", async () => {
   // makeCwd throws on a missing fixture and that throw aborts the whole batch -- after
   // the canaries have been paid for. The worked example hit exactly this: 13 canary
