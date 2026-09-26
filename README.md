@@ -51,6 +51,11 @@ its content hash, its kind, and a prediction:
 At least one `harm` task is required for a CONFIRMATORY stamp. Without a negative control,
 the cheapest way for any skill to pass its own evaluation is to fire on everything.
 
+A skill that's more than one file — `SKILL.md` plus reference material it loads on
+demand — registers `"skill_dir": "<relative dir>"` instead of relying on the bare
+`SKILL.md` fallback; the whole directory is copied into the treatment arm's sandbox and
+covered by the registration hash, not just `SKILL.md` itself. See PROTOCOL.md §1.4.
+
 A worked example is in [`examples/cobra/`](examples/cobra/). Full field reference,
 canonicalization, hash construction and the interval methods: [`PROTOCOL.md`](PROTOCOL.md).
 

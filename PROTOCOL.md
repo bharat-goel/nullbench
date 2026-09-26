@@ -102,6 +102,7 @@ A `nullbench.json` committed to the repository **before** the run.
 | `tasks[].sha256` | 64 hex characters | the declared hash of that file's bytes |
 | `tasks[].kind` | `signal` \| `harm` | what the task is for |
 | `tasks[].predict` | `helps` \| `no-effect` \| `harms` | mandatory, recorded whether or not it is borne out |
+| `skill_dir` | optional, non-empty string | relative to the registration's directory; when present, the skill under test is that whole directory rather than a single `SKILL.md` (§1.4) |
 
 JSON rather than TOML because Node ships no TOML parser — TOML would cost this project
 its only runtime dependency — and, more importantly, because the hash in §3 requires a
@@ -170,6 +171,43 @@ malformed file costs nothing. They are *run* only after confirmation. A judge-gr
 suite with no `canaries.json` is not a structural failure: it is the explicitly un-gated
 state, reported as such and unable to be confirmed.
 
+### 1.4 `skill_dir`
+
+A real Claude Code skill is often more than one file: `SKILL.md` plus a `references/` or
+`guidelines/` directory the skill instructs the model to read on demand. Measuring only
+`SKILL.md` when the content actually being graded lives in those other files understates
+or misstates what the skill does. `skill_dir` names that whole directory instead of a
+single file.
+
+When `skill_dir` is present, the path is relative to the registration's directory, and
+`<skill_dir>/SKILL.md` must exist. **Only the treatment arm ever sees it.** The whole
+directory is copied fresh into that run's own sandbox at `<sandbox>/skill/` — the name is
+singular, and deliberately not one of `assertIsolated`'s forbidden names (§7). The system
+prompt gets exactly one line prepended to `SKILL.md`'s own text, mirroring what Claude
+Code itself prints when a skill loads:
+
+```
+Base directory for this skill: <absolute path of <sandbox>/skill>
+
+<SKILL.md's own text>
+```
+
+Only `SKILL.md`'s text is injected into the prompt. Every other file in `skill_dir` is
+present on disk for the model to read on demand, exactly as a real skill installation
+works, and exactly as never happens in the control arm, whose sandbox contains none of
+it. A fixture that itself carries a top-level `skill` entry collides with this copy and
+is refused as a structural failure (§1.2), the same posture as `assertIsolated`'s check
+but a separate one — that check also runs against the treatment sandbox this project
+itself builds, and `skill/` belongs there.
+
+A symlink anywhere in `skill_dir` is refused as a structural failure rather than
+followed or ignored: it can point outside the directory entirely, which would make both
+the sandbox copy and the manifest hash below name something other than what a reader of
+`skill_dir` actually sees.
+
+Absent `skill_dir`, behaviour is byte-identical to a suite that has never heard of it: a
+single `SKILL.md` beside the registration, injected exactly as before.
+
 ---
 
 ## 2. Canonicalization
@@ -201,8 +239,22 @@ H = sha256(canonical({
 
 with `tasks` sorted by `id`, and each `sha256` being the hash of **the task file's bytes
 as found on disk at run time** — not the value declared in the registration.
-`skill_sha256` is the hash of the injected skill file's bytes, likewise as found at run
-time, or `null` when no skill file is present.
+
+`skill_sha256` depends on whether the registration has `skill_dir` (§1.4):
+
+- **Absent**: the sha256 of the single injected `SKILL.md`'s bytes, as found on disk at
+  run time — unchanged from before `skill_dir` existed, so a registration that has never
+  heard of it hashes exactly as it always did.
+- **Present**: the sha256 of `canonical(manifest)`, where `manifest` is a JSON array of
+  `{ path, sha256 }` — one entry per file anywhere in `skill_dir`, `path` a POSIX-relative
+  path from `skill_dir`'s root, sorted by `path` — over **every file in the directory**,
+  not only `SKILL.md`. Editing any reference file moves `H`; rewriting one with the exact
+  same bytes (a no-op reformat) does not, since the manifest hashes bytes, not mtimes or
+  a formatter's opinion.
+
+Either way, `null` when no skill is present at all — a structural failure the CLI
+rejects before spending anything, and hashing it as a distinct value keeps "no skill"
+from colliding with any real one.
 
 `H` is stamped into the report header and every ledger entry, abbreviated to its first 16
 hex characters for display.
