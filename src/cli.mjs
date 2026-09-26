@@ -1,6 +1,6 @@
 // Flag parsing, cost preflight, orchestration, exit codes.
 
-import { mkdirSync, writeFileSync, existsSync, readFileSync } from "node:fs";
+import { mkdirSync, writeFileSync, existsSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 import { loadRegistration, patternDrift, RegistrationError } from "./prereg.mjs";
 import { runSuite, gradedCounts } from "./runner.mjs";
@@ -9,6 +9,7 @@ import { classify } from "./classify.mjs";
 import { aggregate, renderReport } from "./report.mjs";
 import { appendEntry } from "./ledger.mjs";
 import { distinctiveTerms, scanControlLeakage } from "./leakage.mjs";
+import { combinedSkillText } from "./skill.mjs";
 
 // A value-taking flag in final position reads `undefined` and used to fall back to the
 // registered value in silence -- `nullbench . --model` ran the registered model and said
@@ -96,16 +97,21 @@ export async function main(argv, { stdout = process.stdout, stdin = process.stdi
   const repoRoot = findRepoRoot(dir);
 
   // Resolved before loadRegistration: the skill is hashed into H, so the registration
-  // must be loaded knowing which skill file will actually be injected.
-  const skillFile = args.skill ? resolve(args.skill) : join(dir, "SKILL.md");
+  // must be loaded knowing which skill file will actually be injected. `null` here
+  // (no --skill) lets loadRegistration itself pick between skill_dir and the default
+  // SKILL.md -- it can't be precomputed here any more, because which one applies
+  // depends on nullbench.json's own skill_dir field, not read until loadRegistration
+  // parses it.
+  const skillOverride = args.skill ? resolve(args.skill) : null;
 
   let registration;
   try {
-    registration = loadRegistration(dir, skillFile);
+    registration = loadRegistration(dir, skillOverride);
   } catch (e) {
     if (e instanceof RegistrationError) { stdout.write(`${e.message}\n`); return 2; }
     throw e;
   }
+  const skill = registration.skill;
 
   const requested = {
     reps: args.reps ?? registration.config.reps,
@@ -115,32 +121,27 @@ export async function main(argv, { stdout = process.stdout, stdin = process.stdi
     // A --skill override swaps the thing under test. H already covers the substituted
     // file's contents, but a reader comparing two reports needs to see that the skill
     // came from somewhere other than the registered location.
-    skillOverride: args.skill ? resolve(args.skill) : null,
+    skillOverride,
   };
 
   // Structural, not drift: an unknown id and a missing SKILL.md both mean the run
   // cannot happen. Without these, --task nope threw a TypeError deep in plan(), and a
-  // missing SKILL.md crashed AFTER the whole batch was paid for.
+  // missing SKILL.md crashed AFTER the whole batch was paid for. `skill.mdFile` is
+  // <skill_dir>/SKILL.md for a directory skill, so this same check covers both shapes.
   const known = new Set(registration.tasks.map((t) => t.id));
   const unknown = requested.taskIds.filter((id) => !known.has(id));
   const structural = [
     ...unknown.map((id) => `--task "${id}" is not in the registration`),
-    ...(existsSync(skillFile) ? [] : [`no SKILL.md at ${skillFile}`]),
+    ...(existsSync(skill.mdFile) ? [] : [`no SKILL.md at ${skill.mdFile}`]),
   ];
-  if (structural.length) { stdout.write(new RegistrationError(structural).message + "\n"); return 2; }
 
-  // Verifier patterns are cross-checked against SKILL.md here -- after the file is known
-  // to exist, before the preflight prints, and well before anything is spent. A verbatim
-  // lift is drift, not a structural failure: the run can happen, it just cannot be
-  // confirmed. See patternDrift's header for what it checks and what it cannot.
+  // A fixture is copied to the sandbox root, and treatment additionally copies the
+  // skill directory to <sandbox>/skill/. A fixture that already has a top-level `skill`
+  // entry would collide with that copy in a way indistinguishable from real leakage --
+  // refused outright, same posture as assertIsolated's forbidden-name check, but kept
+  // separate from it: that check runs on every sandbox including the one this project's
+  // own treatment arm builds, and "skill" belongs there.
   //
-  // An unreadable-but-existing SKILL.md (a directory, say) is left alone deliberately.
-  // The post-run leakage scan reads the same file and will surface it there; failing
-  // here instead would change an established exit path for an unrelated reason.
-  try {
-    registration.drift.push(...patternDrift(registration.tasks, readFileSync(skillFile, "utf8")));
-  } catch { /* unreadable SKILL.md: reported by the post-run scan, as before */ }
-
   // Declared fixtures are checked here, at preflight, not when the worker first reaches
   // a task that needs one. makeCwd throws on a missing fixture and that throw aborts the
   // whole batch -- after the canaries have been paid for and, depending on scheduling,
@@ -150,14 +151,33 @@ export async function main(argv, { stdout = process.stdout, stdin = process.stdi
   for (const id of requested.taskIds) {
     const t = registration.tasks.find((x) => x.id === id);
     const fx = t?.spec?.fixture;
-    if (fx && !existsSync(join(dir, fx))) {
-      missingFixtures.push(`task "${id}" declares fixture "${fx}", but ${join(dir, fx)} does not exist`);
+    if (!fx) continue;
+    const fxDir = join(dir, fx);
+    if (!existsSync(fxDir)) {
+      missingFixtures.push(`task "${id}" declares fixture "${fx}", but ${fxDir} does not exist`);
+    } else if (existsSync(join(fxDir, "skill"))) {
+      missingFixtures.push(`task "${id}" fixture "${fx}" has a top-level "skill" entry, which collides with the injected skill directory`);
     }
   }
-  if (missingFixtures.length) {
-    stdout.write(new RegistrationError(missingFixtures).message + "\n");
+  if (structural.length || missingFixtures.length) {
+    stdout.write(new RegistrationError([...structural, ...missingFixtures]).message + "\n");
     return 2;
   }
+
+  // Verifier patterns are cross-checked against every text file the treatment arm can
+  // see here -- after the skill is known to exist, before the preflight prints, and
+  // well before anything is spent. A verbatim lift is drift, not a structural failure:
+  // the run can happen, it just cannot be confirmed. See patternDrift's header for what
+  // it checks and what it cannot; combinedSkillText covers only SKILL.md for a
+  // single-file skill, and every file under skill_dir for a directory one, since an
+  // answer key can sit in a reference file just as easily.
+  //
+  // An unreadable-but-existing SKILL.md (a directory, say) is left alone deliberately.
+  // The post-run leakage scan reads the same file and will surface it there; failing
+  // here instead would change an established exit path for an unrelated reason.
+  try {
+    registration.drift.push(...patternDrift(registration.tasks, combinedSkillText(skill)));
+  } catch { /* unreadable SKILL.md: reported by the post-run scan, as before */ }
 
   // Canaries are loaded (and validated) here, before the dry-run return, not just
   // before they are run. A broken canaries.json -- one that still carries cobra's
@@ -223,7 +243,7 @@ export async function main(argv, { stdout = process.stdout, stdin = process.stdi
   }
 
   const { records } = await runSuite({
-    registration, requested, skillFile, fixtureRoot: dir, repoRoot, rawDir: join(outDir, "raw"),
+    registration, requested, skillFile: skill, fixtureRoot: dir, repoRoot, rawDir: join(outDir, "raw"),
     // Default 4 suits a hosted endpoint. A local model behind LM Studio drops
     // connections under it -- observed as `fetch failed` on 39 of 40 calls, which is a
     // VOID report rather than a wrong number, but still a wasted run. --concurrency 1
@@ -245,7 +265,7 @@ export async function main(argv, { stdout = process.stdout, stdin = process.stdi
   let md = `# nullbench report — ${klass}\n\n(report rendering failed; see records.json)\n`;
   const warnings = [];
   try {
-    const terms = distinctiveTerms(readFileSync(skillFile, "utf8"));
+    const terms = distinctiveTerms(combinedSkillText(skill));
     const leak = scanControlLeakage({ rawDir: join(outDir, "raw"), terms });
     if (leak.suspicious) {
       warnings.push(

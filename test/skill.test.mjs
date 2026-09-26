@@ -135,9 +135,32 @@ test("combinedSkillText is just SKILL.md's text for a single-file skill", () => 
   rmSync(dir, { recursive: true, force: true });
 });
 
-test("combinedSkillText skips unreadable entries rather than throwing", () => {
+// combinedSkillText is only ever called after the CLI's own existsSync(mdFile) check
+// has passed, so "mdFile is entirely missing" is not a realistic input -- what actually
+// happens on a real suite is one BAD reference file among otherwise-good ones (binary,
+// permissions, whatever), and that must not sink the whole cross-check.
+test("combinedSkillText skips an unreadable reference file but keeps SKILL.md's own text", () => {
   const dir = tmp();
-  const skill = resolveSkill(dir, {}); // no SKILL.md at all
-  assert.equal(combinedSkillText(skill), "");
+  makeSkillDir(dir);
+  writeFileSync(join(dir, "skill", "references", "foo.md"), "reference content");
+  const skill = resolveSkill(dir, { skillDir: "skill" });
+  hashSkill(skill);
+  // Replace one already-hashed reference file with a directory -- unreadable as text,
+  // same shape as the EISDIR case below, but on a file combinedSkillText must tolerate.
+  rmSync(join(dir, "skill", "references", "foo.md"));
+  mkdirSync(join(dir, "skill", "references", "foo.md"));
+  const text = combinedSkillText(skill);
+  assert.match(text, /demo/, "SKILL.md's own text must still come through");
+  rmSync(dir, { recursive: true, force: true });
+});
+
+// Regression guard: test/cli.test.mjs pins an EISDIR from an unreadable SKILL.md
+// surfacing as a crash at the reporting stage. combinedSkillText must not quietly
+// absorb that -- only the EXTRA files a directory skill contributes are tolerated.
+test("combinedSkillText lets an unreadable mdFile throw, unlike a reference file", () => {
+  const dir = tmp();
+  mkdirSync(join(dir, "SKILL.md")); // a directory where a file belongs
+  const skill = resolveSkill(dir, {});
+  assert.throws(() => combinedSkillText(skill), /EISDIR/);
   rmSync(dir, { recursive: true, force: true });
 });

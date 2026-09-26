@@ -86,7 +86,16 @@ export function combinedSkillText(skill) {
     : [skill.mdFile];
   let out = "";
   for (const p of paths) {
-    try { out += "\n" + readFileSync(p, "utf8"); } catch { /* unreadable or binary, skip */ }
+    // mdFile itself is let through unguarded -- an unreadable SKILL.md (a directory, in
+    // one existing regression test) is a real problem the CLI's callers decide how to
+    // handle, exactly as before skill_dir existed. Only the EXTRA files a directory
+    // skill contributes are tolerated: a reference file can be binary or otherwise
+    // undecodable without that being this cross-check's problem.
+    if (p === skill.mdFile) {
+      out += "\n" + readFileSync(p, "utf8");
+    } else {
+      try { out += "\n" + readFileSync(p, "utf8"); } catch { /* unreadable or binary, skip */ }
+    }
   }
   return out;
 }

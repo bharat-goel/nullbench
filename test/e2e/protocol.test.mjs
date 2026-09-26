@@ -1,9 +1,9 @@
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, rmSync, mkdirSync, writeFileSync, readdirSync, readFileSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { main } from "../../src/cli.mjs";
-import { makeSuite, useStub, clearStub, capture, ledger, SIGNAL, SIGNAL2, HARM, JUDGE } from "./helpers.mjs";
+import { makeSuite, useStub, useSkillDir, clearStub, capture, ledger, SIGNAL, SIGNAL2, HARM, JUDGE } from "./helpers.mjs";
 
 afterEach(clearStub);
 
@@ -288,6 +288,72 @@ test("SKILL OVERRIDE: --skill swaps the thing under test and cannot be confirmat
   assert.equal(code, 0);
   assert.match(cap.text(), /EXPLORATORY/, "running a skill other than the registered one cannot be confirmed");
   assert.match(cap.text(), /skill differs/, "the report must say which skill actually ran");
+});
+
+// skill_dir end-to-end wiring, item by item against nullbench-skilldir-brief.md.
+
+test("SKILLDIR: treatment sees skill/ on disk; system prompt starts with the Base directory line", async () => {
+  const dir = makeSuite({ tasks: ALL });
+  useSkillDir(dir, {
+    "SKILL.md": "# demo skill\nAsk what a count leaves out before treating it as evidence.",
+    "references/foo.md": "a reference file, loaded on demand, not injected wholesale",
+  });
+  useStub(dir, WORKING);
+  const cap = capture();
+  const code = await main([dir, "--yes"], cap);
+  assert.equal(code, 0);
+  assert.match(cap.text(), /CONFIRMATORY/, "a clean skill_dir run must still confirm");
+});
+
+test("SKILLDIR: PATTERN_IN_SKILL fires on a pattern found only in a reference file, not SKILL.md", async () => {
+  const dir = makeSuite({ tasks: ALL });
+  useSkillDir(dir, {
+    "SKILL.md": "# demo skill\nOrdinary guidance, nothing quotable here.",
+    // "denominator" is SIGNAL's verifier pattern (see helpers.mjs) -- it appears only
+    // in this reference file, never in SKILL.md itself.
+    "references/answer-key.md": "Always say denominator when a count lacks one.",
+  });
+  useStub(dir, { default: { outs: ["a plain reply"] } });
+
+  const cap = capture();
+  const code = await main([dir, "--dry-run"], cap);
+  assert.equal(code, 0);
+  assert.match(cap.text(), /appears verbatim in SKILL\.md/, "the drift message doesn't need its own new wording");
+  assert.match(cap.text(), /denominator/, "the offending pattern must be named");
+  assert.match(cap.text(), /"sig"/, "the offending task must be named");
+});
+
+test("SKILLDIR: a symlink anywhere in skill_dir is a structural failure, exit 2, nothing spent", async () => {
+  const dir = makeSuite({ tasks: ALL });
+  writeFileSync(join(dir, "elsewhere.md"), "outside the skill directory");
+  useSkillDir(dir, { "SKILL.md": "# demo skill" });
+  symlinkSync(join(dir, "elsewhere.md"), join(dir, "skill", "linked.md"));
+  useStub(dir, { default: { outs: ["a plain reply"] } });
+
+  const cap = capture();
+  const code = await main([dir, "--dry-run"], cap);
+  assert.equal(code, 2, "a symlink in skill_dir must be structural, not drift");
+  assert.match(cap.text(), /symlink/);
+  assert.equal(existsSync(join(dir, "results")), false, "nothing must be spent");
+});
+
+test("SKILLDIR: a fixture carrying a top-level `skill` entry is a structural failure", async () => {
+  const FIXTURE_TASK = {
+    id: "fx", kind: "signal", predict: "helps", prompt: "a task needing a project",
+    fixture: "colliding-fixture", verify: { type: "any", patterns: ["x"] },
+  };
+  const dir = makeSuite({ tasks: [FIXTURE_TASK, HARM] });
+  useSkillDir(dir, { "SKILL.md": "# demo skill" });
+  mkdirSync(join(dir, "colliding-fixture", "skill"), { recursive: true });
+  writeFileSync(join(dir, "colliding-fixture", "README.md"), "a fixture project");
+  useStub(dir, { default: { outs: ["a plain reply"] } });
+
+  const cap = capture();
+  const code = await main([dir, "--dry-run"], cap);
+  assert.equal(code, 2, "a fixture colliding with the injected skill/ must be structural");
+  assert.match(cap.text(), /"fx"/);
+  assert.match(cap.text(), /skill/);
+  assert.equal(existsSync(join(dir, "results")), false);
 });
 
 test("PREFLIGHT: a task declaring a fixture that does not exist fails the dry run, before any spend", async () => {
