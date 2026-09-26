@@ -47,7 +47,7 @@ function isInside(ancestor, child) {
 // way to point the treatment arm's sandbox copy at something other than a clean
 // subdirectory of the suite. Each gets its own check and its own message -- a suite
 // author fixing one must not have to guess which of five things was actually wrong.
-function validateSkillDirPath(dir, skillDir, protectedPaths) {
+function validateSkillDirPath(dir, skillDir, protectedPaths, fixtureDirs) {
   if (isAbsolute(skillDir)) {
     throw new RegistrationError([`"skill_dir" must be a relative path, got an absolute one: "${skillDir}"`]);
   }
@@ -80,6 +80,18 @@ function validateSkillDirPath(dir, skillDir, protectedPaths) {
   for (const p of protectedPaths) {
     if (isInside(root, p)) {
       throw new RegistrationError([`"skill_dir" ("${skillDir}") must not contain ${relative(suiteDir, p).split(sep).join("/")}`]);
+    }
+  }
+  // A declared fixture is copied into BOTH arms' sandboxes (runner.mjs's makeCwd), not
+  // only treatment's. A skill_dir inside, equal to, or containing one would put
+  // SKILL.md and every reference file into the control arm too -- FAILURES.md entry 5's
+  // control-arm contamination, reached through the fixture path instead of the repo
+  // root, and invisible to PATTERN_IN_SKILL on a suite with no pattern-verified task to
+  // trip over it. Checked both directions: `protectedPaths` above only ever asked
+  // "is X inside skill_dir"; a fixture also has to ask "is skill_dir inside X".
+  for (const fx of fixtureDirs) {
+    if (isInside(root, fx) || isInside(fx, root)) {
+      throw new RegistrationError([`"skill_dir" ("${skillDir}") must not be inside, equal to, or contain the fixture directory "${relative(suiteDir, fx).split(sep).join("/")}"`]);
     }
   }
 }
@@ -129,10 +141,10 @@ function walkSkillDir(root, rel = "") {
 // (nullbench.json's raw.skill_dir, relative to the registration directory) resolves to
 // a directory; absent either, fall back to today's single SKILL.md beside the
 // registration.
-export function resolveSkill(dir, { override = null, skillDir = null, protectedPaths = [] } = {}) {
+export function resolveSkill(dir, { override = null, skillDir = null, protectedPaths = [], fixtureDirs = [] } = {}) {
   if (override) return { kind: "file", mdFile: override };
   if (skillDir != null) {
-    validateSkillDirPath(dir, skillDir, protectedPaths);
+    validateSkillDirPath(dir, skillDir, protectedPaths, fixtureDirs);
     const root = resolve(join(dir, skillDir));
     return { kind: "dir", root, mdFile: join(root, "SKILL.md") };
   }

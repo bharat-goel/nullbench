@@ -190,12 +190,22 @@ condition its own structural failure:
 - must resolve to a strict subdirectory of the registration directory (catches spellings
   like `"sub/.."` that the checks above don't, and anything else that would put the
   resolved path at or outside the registration directory);
-- must not contain, anywhere inside it, `nullbench.json`, `canaries.json`, any registered
-  task's file, or any declared fixture directory — each of those holds content (a
-  verifier's patterns, a canary's known-PASS replies, a fixture the control arm is also
-  measured against) that PATTERN_IN_SKILL and the leakage scan exist to keep out of the
-  treatment sandbox, and copying `skill_dir` wholesale would hand it over regardless of
-  what those checks catch afterward.
+- must not contain, anywhere inside it, `nullbench.json`, `canaries.json`, or any
+  registered task's file — each of those holds content (a verifier's patterns, a
+  canary's known-PASS replies) that PATTERN_IN_SKILL and the leakage scan exist to keep
+  out of the treatment sandbox, and copying `skill_dir` wholesale would hand it over
+  regardless of what those checks catch afterward;
+- must not be inside, equal to, or contain any declared fixture directory, checked in
+  **both** directions. A fixture is copied into every arm's sandbox, control included
+  (§7) — a `skill_dir` reachable through one would put `SKILL.md` and every reference
+  file into the control arm too, not only treatment's. That is control-arm
+  contamination (§7, FAILURES.md entry 5) reached through the fixture path instead of
+  the repository root, and a suite with no pattern-verified task gives PATTERN_IN_SKILL
+  nothing to catch it with. All comparisons above are by real path (`realpathSync`),
+  resolving symlinks and on-disk casing rather than the resolved-string alone, so a
+  case-insensitive filesystem's own alias of a protected path or fixture — or an
+  intermediate symlink standing in for one of `skill_dir`'s own path components — can't
+  pass as a clean, unrelated directory.
 
 **Only the treatment arm ever sees it.** The whole
 directory is copied fresh into that run's own sandbox at `<sandbox>/skill/` — the name is

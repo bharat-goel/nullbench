@@ -139,6 +139,49 @@ test("resolveSkill refuses a case-variant of a protected path via real-path iden
   rmSync(dir, { recursive: true, force: true });
 });
 
+// N2 (fix round 2): protectedPaths only refused a fixture nested INSIDE skill_dir. The
+// reverse -- skill_dir nested inside (or equal to) a fixture directory -- was not
+// checked at all. makeCwd copies the WHOLE fixture into both arms, so a skill_dir
+// living inside one would put SKILL.md and every reference file into the CONTROL
+// sandbox too, which is exactly the control-arm contamination FAILURES.md entry 5 is
+// about -- and PATTERN_IN_SKILL cannot see it, since a judge-only suite has no pattern
+// to trip over.
+test("resolveSkill refuses a skill_dir nested inside a declared fixture directory", () => {
+  const dir = tmp();
+  mkdirSync(join(dir, "fixture", "sk"), { recursive: true });
+  assert.throws(
+    () => resolveSkill(dir, { skillDir: "fixture/sk", fixtureDirs: [join(dir, "fixture")] }),
+    RegistrationError);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("resolveSkill refuses a skill_dir equal to a declared fixture directory", () => {
+  const dir = tmp();
+  mkdirSync(join(dir, "fixture"));
+  assert.throws(
+    () => resolveSkill(dir, { skillDir: "fixture", fixtureDirs: [join(dir, "fixture")] }),
+    RegistrationError);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("resolveSkill still refuses a fixture nested inside skill_dir (the other direction)", () => {
+  const dir = tmp();
+  mkdirSync(join(dir, "skill", "fixture"), { recursive: true });
+  assert.throws(
+    () => resolveSkill(dir, { skillDir: "skill", fixtureDirs: [join(dir, "skill", "fixture")] }),
+    RegistrationError);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("resolveSkill accepts a skill_dir and a fixture that are genuinely unrelated", () => {
+  const dir = tmp();
+  mkdirSync(join(dir, "skill"));
+  mkdirSync(join(dir, "fixture"));
+  const skill = resolveSkill(dir, { skillDir: "skill", fixtureDirs: [join(dir, "fixture")] });
+  assert.equal(skill.kind, "dir");
+  rmSync(dir, { recursive: true, force: true });
+});
+
 test("resolveSkill accepts a clean strict-subdirectory skill_dir with no overlap", () => {
   const dir = tmp();
   const protectedPaths = [join(dir, "nullbench.json"), join(dir, "tasks", "sig.json")];

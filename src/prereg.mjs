@@ -107,18 +107,23 @@ export function loadRegistration(dir, skillFile = null) {
   // manifest. null when absent or unreadable: that is a structural failure the CLI
   // rejects before spending anything, and hashing it as a distinct value keeps "no
   // skill" from colliding with any real skill.
-  // A skill_dir that swallowed the registration file, the canary bank, a task file or a
-  // declared fixture would copy that content into the treatment sandbox as part of "the
-  // skill" -- exactly what PATTERN_IN_SKILL and the leakage scan exist to keep out.
-  // Built from the parsed, sorted `tasks` (not `raw.tasks`) so a fixture path comes from
-  // the same spec the runner will actually use.
+  // A skill_dir that swallowed the registration file, the canary bank or a task file
+  // would copy that content into the treatment sandbox as part of "the skill" -- exactly
+  // what PATTERN_IN_SKILL and the leakage scan exist to keep out. Built from the parsed,
+  // sorted `tasks` (not `raw.tasks`) so a fixture path comes from the same spec the
+  // runner will actually use.
   const protectedPaths = [
     join(dir, "nullbench.json"),
     join(dir, "canaries.json"),
     ...tasks.map((t) => join(dir, t.file)),
-    ...tasks.filter((t) => typeof t.spec?.fixture === "string").map((t) => join(dir, t.spec.fixture)),
   ];
-  const skill = resolveSkill(dir, { override: skillFile, skillDir: raw.skill_dir, protectedPaths });
+  // Fixtures are checked separately and in BOTH directions (resolveSkill/
+  // validateSkillDirPath): a fixture is copied into every arm's sandbox, control
+  // included, so skill_dir being inside, equal to, or containing one would leak the
+  // skill into the control arm too -- not merely into treatment, which is all
+  // `protectedPaths` above is built to catch.
+  const fixtureDirs = tasks.filter((t) => typeof t.spec?.fixture === "string").map((t) => join(dir, t.spec.fixture));
+  const skill = resolveSkill(dir, { override: skillFile, skillDir: raw.skill_dir, protectedPaths, fixtureDirs });
   const skillSha = hashSkill(skill);
 
   // Hashed over actual contents, not declared ones, so the hash names what really ran.

@@ -232,6 +232,30 @@ test("skill_dir overlapping the tasks directory is a structural failure, wired t
   rmSync(dir, { recursive: true, force: true });
 });
 
+// N2 (fix round 2), wired through loadRegistration: a skill_dir living inside a
+// declared fixture directory used to slip through with no drift raised at all --
+// makeCwd copies the WHOLE fixture into every arm's sandbox, control included, so this
+// would have put SKILL.md and every reference file into the control arm too.
+test("skill_dir nested inside a declared fixture is a structural failure, wired through loadRegistration", () => {
+  const dir = mkdtempSync(join(tmpdir(), "nb-skilldir-fxoverlap-"));
+  mkdirSync(join(dir, "tasks"));
+  mkdirSync(join(dir, "a-fixture", "sk"), { recursive: true });
+  const body = JSON.stringify({
+    id: "fx", prompt: "p", fixture: "a-fixture", verify: { type: "any", patterns: ["x"] },
+  });
+  writeFileSync(join(dir, "tasks", "fx.json"), body);
+  writeFileSync(join(dir, "nullbench.json"), JSON.stringify({
+    model: "sonnet", judge_model: "sonnet", reps: 4, skill_dir: "a-fixture/sk",
+    tasks: [{ id: "fx", file: "tasks/fx.json", sha256: sha(body), kind: "harm", predict: "no-effect" }],
+  }));
+  assert.throws(() => loadRegistration(dir), (e) => {
+    assert.ok(e instanceof RegistrationError);
+    assert.match(e.message, /a-fixture/);
+    return true;
+  });
+  rmSync(dir, { recursive: true, force: true });
+});
+
 test("skill_dir equal to the registration directory itself is a structural failure", () => {
   const dir = mkdtempSync(join(tmpdir(), "nb-skilldir-dot-"));
   mkdirSync(join(dir, "tasks"));
