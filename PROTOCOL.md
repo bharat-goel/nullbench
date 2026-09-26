@@ -180,7 +180,24 @@ or misstates what the skill does. `skill_dir` names that whole directory instead
 single file.
 
 When `skill_dir` is present, the path is relative to the registration's directory, and
-`<skill_dir>/SKILL.md` must exist. **Only the treatment arm ever sees it.** The whole
+`<skill_dir>/SKILL.md` must exist. The path itself is checked before anything else, each
+condition its own structural failure:
+
+- must not be absolute;
+- must not contain a `..` segment;
+- must not be `"."` (or empty) — it names a subdirectory, not the registration directory
+  itself;
+- must resolve to a strict subdirectory of the registration directory (catches spellings
+  like `"sub/.."` that the checks above don't, and anything else that would put the
+  resolved path at or outside the registration directory);
+- must not contain, anywhere inside it, `nullbench.json`, `canaries.json`, any registered
+  task's file, or any declared fixture directory — each of those holds content (a
+  verifier's patterns, a canary's known-PASS replies, a fixture the control arm is also
+  measured against) that PATTERN_IN_SKILL and the leakage scan exist to keep out of the
+  treatment sandbox, and copying `skill_dir` wholesale would hand it over regardless of
+  what those checks catch afterward.
+
+**Only the treatment arm ever sees it.** The whole
 directory is copied fresh into that run's own sandbox at `<sandbox>/skill/` — the name is
 singular, and deliberately not one of `assertIsolated`'s forbidden names (§7). The system
 prompt gets exactly one line prepended to `SKILL.md`'s own text, mirroring what Claude

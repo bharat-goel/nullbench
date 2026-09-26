@@ -4,12 +4,53 @@
 // runner.mjs and cli.mjs don't need to branch on which one they were handed.
 
 import { readFileSync, readdirSync, lstatSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve, relative, isAbsolute, sep } from "node:path";
 import { createHash } from "node:crypto";
 import { canonicalJSON } from "./canonical.mjs";
 import { RegistrationError } from "./errors.mjs";
 
 const sha256 = (buf) => createHash("sha256").update(buf).digest("hex");
+
+// True when `child` is `ancestor` itself or nested anywhere inside it, computed by
+// resolved path rather than string prefix (so "/a/b" is not mistaken for inside "/a/bc").
+function isInside(ancestor, child) {
+  const rel = relative(resolve(ancestor), resolve(child));
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+
+// skill_dir is a string typed straight into nullbench.json, and every one of these is a
+// way to point the treatment arm's sandbox copy at something other than a clean
+// subdirectory of the suite. Each gets its own check and its own message -- a suite
+// author fixing one must not have to guess which of five things was actually wrong.
+function validateSkillDirPath(dir, skillDir, protectedPaths) {
+  if (isAbsolute(skillDir)) {
+    throw new RegistrationError([`"skill_dir" must be a relative path, got an absolute one: "${skillDir}"`]);
+  }
+  if (skillDir.split(/[\\/]+/).includes("..")) {
+    throw new RegistrationError([`"skill_dir" must not contain ".." segments: "${skillDir}"`]);
+  }
+  if (skillDir === "." || skillDir === "") {
+    throw new RegistrationError([`"skill_dir" must not be "." -- it must name a subdirectory, not the suite directory itself`]);
+  }
+  const root = resolve(join(dir, skillDir));
+  const suiteDir = resolve(dir);
+  const rel = relative(suiteDir, root);
+  // Catches what the segment checks above don't: a spelling like "sub/.." that resolves
+  // right back to the suite directory, or (belt and braces) any other escape the string
+  // checks missed.
+  if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
+    throw new RegistrationError([`"skill_dir" must resolve to a strict subdirectory of the registration directory, got "${skillDir}"`]);
+  }
+  // A skill_dir that contains the registration file, the canary bank, a task file, or a
+  // declared fixture would copy that content straight into the treatment sandbox as
+  // part of "the skill" -- rubrics, verifier patterns and known-PASS canary replies are
+  // exactly what PATTERN_IN_SKILL and the leakage scan exist to keep out of there.
+  for (const p of protectedPaths) {
+    if (isInside(root, p)) {
+      throw new RegistrationError([`"skill_dir" ("${skillDir}") must not contain ${relative(suiteDir, p).split(sep).join("/")}`]);
+    }
+  }
+}
 
 // Recursively lists every FILE under root as POSIX-relative paths (joined with "/"
 // regardless of platform, since these paths are hashed and must not vary by OS). A
@@ -39,10 +80,11 @@ function walkSkillDir(root, rel = "") {
 // (nullbench.json's raw.skill_dir, relative to the registration directory) resolves to
 // a directory; absent either, fall back to today's single SKILL.md beside the
 // registration.
-export function resolveSkill(dir, { override = null, skillDir = null } = {}) {
+export function resolveSkill(dir, { override = null, skillDir = null, protectedPaths = [] } = {}) {
   if (override) return { kind: "file", mdFile: override };
   if (skillDir != null) {
-    const root = join(dir, skillDir);
+    validateSkillDirPath(dir, skillDir, protectedPaths);
+    const root = resolve(join(dir, skillDir));
     return { kind: "dir", root, mdFile: join(root, "SKILL.md") };
   }
   return { kind: "file", mdFile: join(dir, "SKILL.md") };

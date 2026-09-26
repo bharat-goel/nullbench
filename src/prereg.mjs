@@ -107,7 +107,18 @@ export function loadRegistration(dir, skillFile = null) {
   // manifest. null when absent or unreadable: that is a structural failure the CLI
   // rejects before spending anything, and hashing it as a distinct value keeps "no
   // skill" from colliding with any real skill.
-  const skill = resolveSkill(dir, { override: skillFile, skillDir: raw.skill_dir });
+  // A skill_dir that swallowed the registration file, the canary bank, a task file or a
+  // declared fixture would copy that content into the treatment sandbox as part of "the
+  // skill" -- exactly what PATTERN_IN_SKILL and the leakage scan exist to keep out.
+  // Built from the parsed, sorted `tasks` (not `raw.tasks`) so a fixture path comes from
+  // the same spec the runner will actually use.
+  const protectedPaths = [
+    join(dir, "nullbench.json"),
+    join(dir, "canaries.json"),
+    ...tasks.map((t) => join(dir, t.file)),
+    ...tasks.filter((t) => typeof t.spec?.fixture === "string").map((t) => join(dir, t.spec.fixture)),
+  ];
+  const skill = resolveSkill(dir, { override: skillFile, skillDir: raw.skill_dir, protectedPaths });
   const skillSha = hashSkill(skill);
 
   // Hashed over actual contents, not declared ones, so the hash names what really ran.

@@ -215,6 +215,36 @@ test("skill_dir present: a missing SKILL.md inside it is reported like today's m
   rmSync(dir, { recursive: true, force: true });
 });
 
+test("skill_dir overlapping the tasks directory is a structural failure, wired through loadRegistration", () => {
+  const dir = mkdtempSync(join(tmpdir(), "nb-skilldir-overlap-"));
+  mkdirSync(join(dir, "tasks"));
+  const body = JSON.stringify({ id: "t", prompt: "p", verify: { type: "any", patterns: ["x"] } });
+  writeFileSync(join(dir, "tasks", "t.json"), body);
+  writeFileSync(join(dir, "nullbench.json"), JSON.stringify({
+    model: "sonnet", judge_model: "sonnet", reps: 4, skill_dir: "tasks",
+    tasks: [{ id: "t", file: "tasks/t.json", sha256: sha(body), kind: "harm", predict: "no-effect" }],
+  }));
+  assert.throws(() => loadRegistration(dir), (e) => {
+    assert.ok(e instanceof RegistrationError);
+    assert.match(e.message, /tasks\/t\.json/);
+    return true;
+  });
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("skill_dir equal to the registration directory itself is a structural failure", () => {
+  const dir = mkdtempSync(join(tmpdir(), "nb-skilldir-dot-"));
+  mkdirSync(join(dir, "tasks"));
+  const body = JSON.stringify({ id: "t", prompt: "p", verify: { type: "any", patterns: ["x"] } });
+  writeFileSync(join(dir, "tasks", "t.json"), body);
+  writeFileSync(join(dir, "nullbench.json"), JSON.stringify({
+    model: "sonnet", judge_model: "sonnet", reps: 4, skill_dir: ".",
+    tasks: [{ id: "t", file: "tasks/t.json", sha256: sha(body), kind: "harm", predict: "no-effect" }],
+  }));
+  assert.throws(() => loadRegistration(dir), RegistrationError);
+  rmSync(dir, { recursive: true, force: true });
+});
+
 test("a malformed task entry is a RegistrationError, not a TypeError escaping as exit 1", () => {
   const dir = mkdtempSync(join(tmpdir(), "nb-badtask-"));
   writeFileSync(join(dir, "SKILL.md"), "# s\n");

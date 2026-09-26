@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, basename } from "node:path";
 import { resolveSkill, hashSkill, combinedSkillText } from "../src/skill.mjs";
 import { RegistrationError } from "../src/errors.mjs";
 
@@ -32,6 +32,94 @@ test("resolveSkill treats skill_dir as a directory containing SKILL.md", () => {
   assert.equal(skill.kind, "dir");
   assert.equal(skill.root, join(dir, "skill"));
   assert.equal(skill.mdFile, join(dir, "skill", "SKILL.md"));
+  rmSync(dir, { recursive: true, force: true });
+});
+
+// skill_dir path rules: each is its own structural failure, tested individually so a
+// fix for one can't silently regress another.
+
+test("resolveSkill refuses an absolute skill_dir", () => {
+  const dir = tmp();
+  assert.throws(() => resolveSkill(dir, { skillDir: "/etc/skill" }), (e) => {
+    assert.ok(e instanceof RegistrationError);
+    assert.match(e.message, /absolute/);
+    return true;
+  });
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('resolveSkill refuses a skill_dir containing ".."', () => {
+  const dir = tmp();
+  assert.throws(() => resolveSkill(dir, { skillDir: "../elsewhere" }), (e) => {
+    assert.ok(e instanceof RegistrationError);
+    assert.match(e.message, /\.\./);
+    return true;
+  });
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('resolveSkill refuses skill_dir "."', () => {
+  const dir = tmp();
+  assert.throws(() => resolveSkill(dir, { skillDir: "." }), (e) => {
+    assert.ok(e instanceof RegistrationError);
+    assert.match(e.message, /"\."/);
+    return true;
+  });
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("resolveSkill refuses a skill_dir that resolves to the suite directory itself", () => {
+  const dir = tmp();
+  mkdirSync(join(dir, "sub"));
+  // "sub/.." resolves right back to `dir` -- not caught by the "." or ".." segment
+  // checks alone, since neither literal appears as a bare match against those, so this
+  // needs the resolved-path check too.
+  assert.throws(() => resolveSkill(dir, { skillDir: "sub/.." }), (e) => {
+    assert.ok(e instanceof RegistrationError);
+    return true;
+  });
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("resolveSkill requires skill_dir to be a strict subdirectory of the suite", () => {
+  const dir = tmp();
+  const sibling = tmp();
+  // A relative path that, joined with dir, escapes dir entirely -- e.g. dir is
+  // /tmp/nb-skill-A and skillDir is "../nb-skill-B/skill", both segments containing
+  // ".." so the segment check alone already catches most of this, but the resolved
+  // check is the one that must hold regardless of how the escape is spelled.
+  const rel = join("..", basename(sibling), "skill");
+  assert.throws(() => resolveSkill(dir, { skillDir: rel }), RegistrationError);
+  rmSync(dir, { recursive: true, force: true });
+  rmSync(sibling, { recursive: true, force: true });
+});
+
+test("resolveSkill refuses skill_dir overlapping a protected path (nullbench.json, canaries.json, a task file, a fixture)", () => {
+  const dir = tmp();
+  // Each case: skillDir is a plausible-looking strict subdirectory that happens to
+  // contain one of the four protected paths nested inside it -- the realistic way a
+  // careless skill_dir choice (or a coincidentally named directory) would leak a
+  // rubric, a canary bank, or a fixture into the treatment sandbox.
+  assert.throws(
+    () => resolveSkill(dir, { skillDir: "sub", protectedPaths: [join(dir, "sub", "nullbench.json")] }),
+    RegistrationError, "must refuse when nullbench.json sits inside skill_dir");
+  assert.throws(
+    () => resolveSkill(dir, { skillDir: "sub", protectedPaths: [join(dir, "sub", "canaries.json")] }),
+    RegistrationError, "must refuse when canaries.json sits inside skill_dir");
+  assert.throws(
+    () => resolveSkill(dir, { skillDir: "wrapper", protectedPaths: [join(dir, "wrapper", "tasks", "sig.json")] }),
+    RegistrationError, "must refuse when a task file sits inside skill_dir");
+  assert.throws(
+    () => resolveSkill(dir, { skillDir: "wrapper2", protectedPaths: [join(dir, "wrapper2", "some-fixture")] }),
+    RegistrationError, "must refuse when a declared fixture sits inside skill_dir");
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("resolveSkill accepts a clean strict-subdirectory skill_dir with no overlap", () => {
+  const dir = tmp();
+  const protectedPaths = [join(dir, "nullbench.json"), join(dir, "tasks", "sig.json")];
+  const skill = resolveSkill(dir, { skillDir: "skill", protectedPaths });
+  assert.equal(skill.kind, "dir");
   rmSync(dir, { recursive: true, force: true });
 });
 
