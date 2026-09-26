@@ -380,6 +380,68 @@ test("the judge never runs in the subject's sandbox, in either arm", async () =>
   clean(dir);
 });
 
+// N3 (fix round 2): the subject sandbox (and, in treatment, the prompt scratch dir) was
+// only removed in the worker's OUTER `finally` -- after the judge had already run. The
+// judge itself is unrestricted and the treatment prompt names the sandbox's absolute
+// path, so a reply that quotes it could still reach the subject's directory by absolute
+// path while it was judged. Fixed: remove both BEFORE calling runJudge, keeping the
+// outer `finally` only as a backstop for the non-judge path (and for a judge call that
+// throws before this point).
+//
+// Tested from OUTSIDE the process under test, since the judge runs in its own
+// directory with no other way to see what happened to the subject's: concurrency 1
+// means at most one subject sandbox is in flight system-wide at any moment, so the
+// judge's own stub invocation reporting an EMPTY <tmp-sandboxes> list proves this job's
+// subject sandbox was already gone by the time it ran, not merely eventually cleaned up.
+test("the subject sandbox is removed BEFORE the judge is invoked, not just eventually", async () => {
+  // A private, empty TMPDIR for the scan's duration -- os.tmpdir() re-reads
+  // process.env.TMPDIR on every call on POSIX, and the real one can carry unrelated
+  // leftovers (this project's own killed-process debris, other tools' temp dirs) that
+  // would make the <tmp-sandboxes> scan non-empty for reasons that have nothing to do
+  // with this test. Same pattern as the existing "does not leak the shared sandbox"
+  // test below.
+  const isolatedTmp = mkdtempSync(join(tmpdir(), "nb-isolated-tmpdir-"));
+  const prevTmpdir = process.env.TMPDIR;
+  process.env.TMPDIR = isolatedTmp;
+  try {
+    const dir = env({
+      rules: [{ promptIncludes: "RUBRIC", arm: "any", outs: ["VERDICT: PASS\nREASON: fine"] }],
+      default: { outs: ["a reply"] },
+    });
+    const judged = {
+      ...registration,
+      tasks: [{
+        id: "jg", kind: "signal", predict: "helps",
+        spec: { id: "jg", prompt: "judge me", verify: { type: "judge", rubric: "RUBRIC" } },
+      }],
+    };
+    const raw = join(dir, "raw");
+    process.env.NULLBENCH_STUB_ECHO_TMPDIR_SANDBOXES = "1";
+    let records;
+    try {
+      ({ records } = await runSuite({
+        registration: judged, requested: { ...requested, taskIds: ["jg"] },
+        skillFile: join(dir, "SKILL.md"), rawDir: raw, concurrency: 1,
+      }));
+    } finally {
+      delete process.env.NULLBENCH_STUB_ECHO_TMPDIR_SANDBOXES;
+    }
+    assert.ok(records.every((r) => r.pass));
+    const judgeFiles = readdirSync(raw).filter((f) => f.includes("__judge"));
+    assert.equal(judgeFiles.length, 8);
+    for (const f of judgeFiles) {
+      const text = readFileSync(join(raw, f), "utf8");
+      assert.match(text, /<tmp-sandboxes><\/tmp-sandboxes>/,
+        `${f}: a subject sandbox was still on disk when the judge ran for this job`);
+    }
+    clean(dir);
+  } finally {
+    if (prevTmpdir === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = prevTmpdir;
+    rmSync(isolatedTmp, { recursive: true, force: true });
+  }
+});
+
 test("gradedCounts reports per-arm graded totals", () => {
   const recs = [
     { task: "a", cond: "control", pass: true, failed: false },

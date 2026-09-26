@@ -165,12 +165,23 @@ export async function runSuite({
           // batch print a tidy -13.3pp. FAILURES.md entry 8.
           v = { pass: false, failed: true, why: `run failed (exit ${code}): ${(out || err).slice(0, 80)}` };
         } else if (task.spec.verify.type === "judge") {
+          // The judge only needs `out` (the reply text) from here on -- the subject's
+          // sandbox and the prompt scratch dir are removed BEFORE runJudge is called,
+          // not merely in the outer `finally` afterward. The judge is unrestricted and
+          // the treatment prompt names the sandbox's own absolute path; a reply that
+          // quoted it could otherwise still reach the subject's directory by absolute
+          // path while the judge held no restrictions of its own. The outer `finally`
+          // below still calls rmSync on both -- a no-op here since they're already
+          // gone, and the only backstop that matters for the non-judge branches above.
+          if (promptScratch) { rmSync(promptScratch, { recursive: true, force: true }); promptScratch = null; }
+          rmSync(cwd, { recursive: true, force: true });
+
           // The judge must NEVER share the subject's sandbox: in treatment that sandbox
-          // holds skill/ (and, briefly, above, the prompt scratch dir), and an
+          // held skill/ (and, until just above, the prompt scratch dir), and an
           // unrestricted judge invocation could read straight off disk -- exactly the
           // channel FAILURES.md entry 1 exists to close, reopened one level up if the
           // judge ran here instead. A fresh, isolation-checked sandbox per judge call,
-          // destroyed immediately after, closes it regardless of what cwd holds.
+          // destroyed immediately after, closes it regardless of what cwd used to hold.
           const judgeCwd = mkdtempSync(join(tmpdir(), "nullbench-judge-"));
           const judgeIso = assertIsolated(judgeCwd, repoRoot);
           if (!judgeIso.ok) {

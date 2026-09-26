@@ -17,6 +17,17 @@
 // marker; only a LATER run sharing the same directory can see it. That is exactly the
 // cross-run visibility being pinned in test/runner.test.mjs. Default (env unset)
 // behaviour is byte-identical to before this existed: nothing is written.
+//
+// NULLBENCH_STUB_ECHO_TMPDIR_SANDBOXES: when set, the stub lists every entry under
+// os.tmpdir() whose name starts with "nullbench-run-" or "nullbench-fx-" (a SUBJECT
+// sandbox, fixture-backed or not) and appends:
+//   <tmp-sandboxes>a,b,c</tmp-sandboxes>
+// This is what makes "the subject sandbox is gone before the judge is invoked, not just
+// eventually" a fact a test can check from OUTSIDE the process under test: the judge is
+// a separate stub invocation, in its own directory, with no other way to see what
+// happened to the subject's. Run this at concurrency 1 and there is at most one subject
+// sandbox in flight system-wide, so an empty list at the moment the JUDGE's own
+// invocation runs proves this job's subject sandbox was already removed.
 
 import {
   readFileSync,
@@ -29,6 +40,7 @@ import {
   readdirSync,
   statSync,
 } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 // NULLBENCH_STUB_ECHO_SKILL_FILES: when set, the stub recursively walks its own
@@ -153,6 +165,12 @@ if (process.env.NULLBENCH_STUB_ECHO_SKILL_FILES) {
 // After the listing, deliberately -- see the header note.
 if (process.env.NULLBENCH_STUB_WRITE_CWD_FILE) {
   writeFileSync(join(process.cwd(), process.env.NULLBENCH_STUB_WRITE_CWD_FILE), "written by a stub run\n");
+}
+if (process.env.NULLBENCH_STUB_ECHO_TMPDIR_SANDBOXES) {
+  const sandboxes = readdirSync(tmpdir())
+    .filter((f) => f.startsWith("nullbench-run-") || f.startsWith("nullbench-fx-"))
+    .sort();
+  output += `\n<tmp-sandboxes>${sandboxes.join(",")}</tmp-sandboxes>`;
 }
 process.stdout.write(output);
 process.exit(rule.code ?? 0);
