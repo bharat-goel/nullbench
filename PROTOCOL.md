@@ -246,7 +246,10 @@ guarantee a case-insensitive filesystem's own lookups give elsewhere — are ref
 same way `assertIsolated` refuses them at a sandbox's top level (§7) — Claude Code
 itself loads a nested `CLAUDE.md` or `.claude` when working in a subdirectory, so "top
 level only" is not a safe boundary for a directory copied in
-wholesale.
+wholesale. Unlike `assertIsolated`'s sandbox/fixture check (§7), `skills` here has no
+SKILL.md exception: this is the skill under test being copied into the treatment
+sandbox as `skill/`, not a fixture that happens to have an unrelated `skills/` path in
+it, so a nested `skills` entry is refused unconditionally regardless of what it holds.
 
 Once `skill_dir`'s root has been confirmed to exist, any further problem reading it — a
 walk error, or a single unreadable file among otherwise-good ones — is also a structural
@@ -552,14 +555,27 @@ Before each run, the sandbox is checked:
 - it must not be inside the repository root (found by walking up from the registration
   directory to the nearest `.git`, so a suite living in a subdirectory of a larger repo is
   still protected from that whole repo);
-- it must not contain `CLAUDE.md`, `CLAUDE.local.md`, `.claude`, `skills`, or `AGENTS.md`.
+- it must not contain `CLAUDE.md`, `CLAUDE.local.md`, `.claude`, or `AGENTS.md`;
+- it must not contain a top-level `skills` entry that has a file named `SKILL.md`
+  (checked case-insensitively, at any depth beneath it) — Claude Code loads project
+  skills from `.claude/skills`, never from a top-level `skills/`, so a `skills/` tree
+  with no `SKILL.md` anywhere beneath it holds no skill and is allowed. A `skills` entry
+  that is not a directory, or that cannot be read, is refused unconditionally rather than
+  assumed clean.
 
 A failed check aborts the whole batch, not the one task: a sandbox that fails it means
 the environment is wrong, and every run in flight shares that environment.
 
 A fixture is copied fresh for every run and is checked by the same rule; a fixture
-carrying any of those four entries is refused outright rather than inspected, because it
-is indistinguishable by inspection from real leakage.
+carrying `CLAUDE.md`, `CLAUDE.local.md`, `.claude`, `AGENTS.md`, or a `skills/` entry
+that holds a `SKILL.md`, is refused outright rather than inspected, because it is
+indistinguishable by inspection from real leakage. Unlike the sandbox check above, which
+only runs once the batch is already under way, a declared fixture is also checked at
+**preflight** (including `--dry-run`): the CLI copies the fixture's own contents to a
+throwaway directory and runs this same check on it before any canary or subject call, so
+a fixture that would be refused fails structurally (exit 2) before anything is spent,
+rather than aborting mid-batch after the judge canaries for that run have already been
+paid for.
 
 Treatment differs from control in exactly one respect: `SKILL.md` is appended to the
 system prompt. Nothing else.
