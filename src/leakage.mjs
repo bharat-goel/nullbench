@@ -39,7 +39,13 @@ function hasSkillMdBeneath(absDir) {
   }
   for (const e of entries) {
     const child = join(absDir, e.name);
-    if (e.isSymbolicLink()) continue; // not followed; not a plain file or directory either
+    // A symlink -- named SKILL.md, or a directory standing in for a real skill
+    // directory -- is not followed, but "not followed" must not mean "assumed
+    // harmless": resolving it could land on a SKILL.md just as easily as any other
+    // path component in this project (validateSkillDirPath, walkSkillDir) treats a
+    // symlink as a potential escape hatch rather than as nothing. Same conservative
+    // default as an unreadable directory below: assume it could hold a skill.
+    if (e.isSymbolicLink()) return true;
     if (e.isFile()) {
       if (e.name.toLowerCase() === "skill.md") return true;
     } else if (e.isDirectory()) {

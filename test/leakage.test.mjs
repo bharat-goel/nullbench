@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { assertIsolated, distinctiveTerms, distinctiveTermsForSkill, scanControlLeakage } from "../src/leakage.mjs";
@@ -84,6 +84,38 @@ test("skills/x/skill.md is refused case-insensitively", () => {
   writeFileSync(join(dir, "skills", "x", "skill.md"), "# a real skill, oddly cased");
   const r = assertIsolated(dir, "/elsewhere");
   assert.equal(r.ok, false);
+  assert.ok(r.problems.some((p) => p.includes("skills")));
+  rmSync(dir, { recursive: true, force: true });
+});
+
+// hasSkillMdBeneath used to `continue` past a symlink entry, i.e. treat it as neither
+// a file nor a directory worth looking at -- fine for the walk not throwing, wrong for
+// the safety property: a symlink named SKILL.md (pointing anywhere) or a symlinked
+// directory standing in for a real skill directory both let a top-level skills/ pass
+// as "no SKILL.md beneath it" while actually resolving to one. Treat ANY symlink
+// beneath skills/ the same as an unreadable directory: conservatively assume it could
+// hold a skill, and refuse.
+test("skills/x/SKILL.md as a symlink is refused, not silently skipped", () => {
+  const dir = mkdtempSync(join(tmpdir(), "nb-iso-skills-"));
+  mkdirSync(join(dir, "skills", "x"), { recursive: true });
+  const realSkillMd = join(dir, "real-SKILL.md");
+  writeFileSync(realSkillMd, "# a real skill, reached via a symlink");
+  symlinkSync(realSkillMd, join(dir, "skills", "x", "SKILL.md"));
+  const r = assertIsolated(dir, "/elsewhere");
+  assert.equal(r.ok, false, `problems: ${r.problems.join("; ")}`);
+  assert.ok(r.problems.some((p) => p.includes("skills")));
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("skills/link -> a symlinked directory pointing at a skill is refused, not silently skipped", () => {
+  const dir = mkdtempSync(join(tmpdir(), "nb-iso-skills-"));
+  mkdirSync(join(dir, "skills"), { recursive: true });
+  const realSkillDir = join(dir, "real-skill-dir");
+  mkdirSync(realSkillDir);
+  writeFileSync(join(realSkillDir, "SKILL.md"), "# a real skill, reached via a symlinked directory");
+  symlinkSync(realSkillDir, join(dir, "skills", "link"));
+  const r = assertIsolated(dir, "/elsewhere");
+  assert.equal(r.ok, false, `problems: ${r.problems.join("; ")}`);
   assert.ok(r.problems.some((p) => p.includes("skills")));
   rmSync(dir, { recursive: true, force: true });
 });
