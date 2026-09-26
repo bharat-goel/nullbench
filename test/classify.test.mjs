@@ -21,6 +21,16 @@ test("minGraded floors at 3 and otherwise takes 80% of reps", () => {
   assert.equal(minGraded(20), 16);
 });
 
+test("a --skill override names skill_dir, not SKILL.md, when the registration has a skill_dir", () => {
+  const dirRegistration = { ...registration, skill: { kind: "dir", root: "/suite/skill" } };
+  const r = classify({
+    registration: dirRegistration, requested: { ...requested, skillOverride: "/elsewhere/other.md" }, gradedCounts: full, canaryOk: null,
+  });
+  assert.equal(r.klass, "EXPLORATORY");
+  assert.ok(r.reasons.some((x) => /registered skill_dir/.test(x)), "must name skill_dir, not SKILL.md");
+  assert.ok(!r.reasons.some((x) => /registered SKILL\.md/.test(x)));
+});
+
 test("a clean run is confirmatory", () => {
   const r = classify({ registration, requested, gradedCounts: full, canaryOk: null });
   assert.equal(r.klass, "CONFIRMATORY");

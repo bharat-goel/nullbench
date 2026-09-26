@@ -305,6 +305,12 @@ test("skill_dir treatment: the sandbox gets skill/ with every file; control gets
 
   const raw = join(dir, "raw");
   process.env.NULLBENCH_STUB_ECHO_CWD = "1";
+  // ECHO_CWD alone only lists the SANDBOX's top level ("skill" appears as one entry) --
+  // that would pass even if the copy silently dropped everything below skill/'s top
+  // level. ECHO_SKILL_FILES has the stub walk skill/ itself and report every file it
+  // actually finds there, so "every file was copied" is a claim this test can check,
+  // not just "a directory named skill exists".
+  process.env.NULLBENCH_STUB_ECHO_SKILL_FILES = "1";
   let records;
   try {
     ({ records } = await runSuite({
@@ -314,6 +320,7 @@ test("skill_dir treatment: the sandbox gets skill/ with every file; control gets
     }));
   } finally {
     delete process.env.NULLBENCH_STUB_ECHO_CWD;
+    delete process.env.NULLBENCH_STUB_ECHO_SKILL_FILES;
   }
   assert.equal(records.length, 8);
   const treatmentFiles = readdirSync(raw).filter((f) => f.includes("__treatment__"));
@@ -321,10 +328,13 @@ test("skill_dir treatment: the sandbox gets skill/ with every file; control gets
   for (const f of treatmentFiles) {
     const text = readFileSync(join(raw, f), "utf8");
     assert.match(text, /<cwd-files>.*skill.*<\/cwd-files>/, `${f}: treatment sandbox must contain skill/`);
+    assert.match(text, /<skill-files>SKILL\.md,references\/foo\.md<\/skill-files>/,
+      `${f}: every file under skill_dir must actually be copied, not just the top-level directory`);
   }
   for (const f of controlFiles) {
     const text = readFileSync(join(raw, f), "utf8");
     assert.doesNotMatch(text, /<cwd-files>.*skill.*<\/cwd-files>/, `${f}: control sandbox must not see any skill file`);
+    assert.match(text, /<skill-files><\/skill-files>/, `${f}: control sandbox must have no skill/ directory to walk at all`);
   }
   clean(dir);
 });

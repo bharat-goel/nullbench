@@ -318,7 +318,10 @@ test("SKILLDIR: PATTERN_IN_SKILL fires on a pattern found only in a reference fi
   const cap = capture();
   const code = await main([dir, "--dry-run"], cap);
   assert.equal(code, 0);
-  assert.match(cap.text(), /appears verbatim in SKILL\.md/, "the drift message doesn't need its own new wording");
+  // The match is in a reference file, not SKILL.md -- the message must say so rather
+  // than naming SKILL.md when the actual hit could be anywhere in skill_dir.
+  assert.match(cap.text(), /appears verbatim in skill_dir/, "a skill_dir suite's drift message must name skill_dir, not SKILL.md");
+  assert.doesNotMatch(cap.text(), /appears verbatim in SKILL\.md/);
   assert.match(cap.text(), /denominator/, "the offending pattern must be named");
   assert.match(cap.text(), /"sig"/, "the offending task must be named");
 });
@@ -371,6 +374,24 @@ test("SKILLDIR: a nested CLAUDE.md inside skill_dir is a structural failure, not
   assert.equal(code, 2, "a nested CLAUDE.md inside skill_dir must be structural");
   assert.match(cap.text(), /CLAUDE\.md/);
   assert.equal(existsSync(join(dir, "results")), false);
+});
+
+test("a fixture with a top-level 'skill' entry is fine for a suite with no skill_dir at all", async () => {
+  // The collision check exists because treatment copies skill_dir to <sandbox>/skill/ --
+  // a suite with no skill_dir (the single-file SKILL.md default) never does that, so a
+  // fixture's own "skill" directory or file cannot collide with anything.
+  const FIXTURE_TASK = {
+    id: "fx", kind: "signal", predict: "helps", prompt: "a task needing a project",
+    fixture: "ok-fixture", verify: { type: "any", patterns: ["reply"] },
+  };
+  const dir = makeSuite({ tasks: [FIXTURE_TASK, HARM] });
+  mkdirSync(join(dir, "ok-fixture", "skill"), { recursive: true });
+  writeFileSync(join(dir, "ok-fixture", "README.md"), "a fixture project");
+  useStub(dir, { default: { outs: ["a plain reply"] } });
+
+  const cap = capture();
+  const code = await main([dir, "--dry-run"], cap);
+  assert.equal(code, 0, "no skill_dir means no collision is possible");
 });
 
 test("PREFLIGHT: a task declaring a fixture that does not exist fails the dry run, before any spend", async () => {

@@ -155,7 +155,10 @@ export async function main(argv, { stdout = process.stdout, stdin = process.stdi
     const fxDir = join(dir, fx);
     if (!existsSync(fxDir)) {
       missingFixtures.push(`task "${id}" declares fixture "${fx}", but ${fxDir} does not exist`);
-    } else if (existsSync(join(fxDir, "skill"))) {
+    } else if (skill.kind === "dir" && existsSync(join(fxDir, "skill"))) {
+      // Only meaningful when treatment will actually copy something to <sandbox>/skill/
+      // -- a suite with no skill_dir never does that, so a fixture's own "skill" entry
+      // cannot collide with anything.
       missingFixtures.push(`task "${id}" fixture "${fx}" has a top-level "skill" entry, which collides with the injected skill directory`);
     }
   }
@@ -176,7 +179,8 @@ export async function main(argv, { stdout = process.stdout, stdin = process.stdi
   // The post-run leakage scan reads the same file and will surface it there; failing
   // here instead would change an established exit path for an unrelated reason.
   try {
-    registration.drift.push(...patternDrift(registration.tasks, combinedSkillText(skill)));
+    registration.drift.push(...patternDrift(
+      registration.tasks, combinedSkillText(skill), skill.kind === "dir" ? "skill_dir" : "SKILL.md"));
   } catch { /* unreadable SKILL.md: reported by the post-run scan, as before */ }
 
   // Canaries are loaded (and validated) here, before the dry-run return, not just

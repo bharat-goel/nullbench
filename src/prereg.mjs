@@ -168,7 +168,12 @@ export function loadRegistration(dir, skillFile = null) {
 // What this does NOT catch, and the documentation must not claim otherwise: a paraphrase
 // of a skill phrase, a word the skill merely makes more likely, or a pattern the author
 // chose after reading skill-influenced replies. It catches a verbatim lift.
-export function patternDrift(tasks, skillText) {
+// `sourceLabel` names what actually got scanned in the drift message -- "SKILL.md" by
+// default (the single-file shape), or a caller-supplied label such as "skill_dir" when
+// the hit could be in any reference file, not necessarily SKILL.md itself. Saying
+// "appears verbatim in SKILL.md" for a match that only exists in a reference file would
+// send a suite author looking in the wrong place.
+export function patternDrift(tasks, skillText, sourceLabel = "SKILL.md") {
   const hay = String(skillText).toLowerCase();
   const out = [];
   for (const t of tasks) {
@@ -185,7 +190,7 @@ export function patternDrift(tasks, skillText) {
       if (hay.includes(needle)) {
         out.push({
           code: "PATTERN_IN_SKILL",
-          detail: `task "${t.id}" verifier pattern "${p}" appears verbatim in SKILL.md; ` +
+          detail: `task "${t.id}" verifier pattern "${p}" appears verbatim in ${sourceLabel}; ` +
             `the treatment arm can pass it by reading its own system prompt`,
         });
       }

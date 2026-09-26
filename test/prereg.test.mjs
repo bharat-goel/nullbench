@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadRegistration, RegistrationError } from "../src/prereg.mjs";
+import { loadRegistration, RegistrationError, patternDrift } from "../src/prereg.mjs";
 import { createHash } from "node:crypto";
 
 const sha = (s) => createHash("sha256").update(s).digest("hex");
@@ -243,6 +243,16 @@ test("skill_dir equal to the registration directory itself is a structural failu
   }));
   assert.throws(() => loadRegistration(dir), RegistrationError);
   rmSync(dir, { recursive: true, force: true });
+});
+
+test("patternDrift names the actual source (SKILL.md by default, or a caller-supplied label)", () => {
+  const tasks = [{ id: "sig", kind: "signal", spec: { verify: { type: "any", patterns: ["denominator"] } } }];
+  const defaultLabel = patternDrift(tasks, "text mentioning denominator somewhere");
+  assert.match(defaultLabel[0].detail, /appears verbatim in SKILL\.md/);
+
+  const skillDirLabel = patternDrift(tasks, "text mentioning denominator somewhere", "skill_dir");
+  assert.match(skillDirLabel[0].detail, /appears verbatim in skill_dir/);
+  assert.doesNotMatch(skillDirLabel[0].detail, /SKILL\.md/);
 });
 
 test("a malformed task entry is a RegistrationError, not a TypeError escaping as exit 1", () => {

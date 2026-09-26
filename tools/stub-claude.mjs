@@ -27,8 +27,35 @@ import {
   closeSync,
   unlinkSync,
   readdirSync,
+  statSync,
 } from "node:fs";
 import { join } from "node:path";
+
+// NULLBENCH_STUB_ECHO_SKILL_FILES: when set, the stub recursively walks its own
+// process.cwd()/skill (if that directory exists at all) and appends a third line:
+//   <skill-files>SKILL.md,references/foo.md</skill-files>
+// sorted, POSIX-joined, relative to skill/. ECHO_CWD alone only shows "skill" as ONE
+// top-level entry -- that would look identical whether the copy brought every file
+// along or silently dropped everything below the top level. This walks the actual
+// contents so a test can assert on what got copied, not just that a directory exists.
+// No skill/ at all (the control arm, or a single-file skill) reports an empty list, not
+// an absent line, so a test never has to special-case "line missing" vs "walked empty".
+function walkSkillDirForEcho(dir, rel = "") {
+  const abs = join(dir, rel);
+  let out = [];
+  for (const name of readdirSync(abs).sort()) {
+    const childRel = rel ? `${rel}/${name}` : name;
+    let isDir = false;
+    try {
+      isDir = statSync(join(abs, name)).isDirectory();
+    } catch {
+      continue;
+    }
+    if (isDir) out = out.concat(walkSkillDirForEcho(dir, childRel));
+    else out.push(childRel);
+  }
+  return out;
+}
 
 const plan = JSON.parse(readFileSync(process.env.NULLBENCH_STUB_PLAN, "utf8"));
 const statePath = process.env.NULLBENCH_STUB_STATE;
@@ -117,6 +144,11 @@ const outs = rule.outs ?? [""];
 let output = outs[i % outs.length];
 if (process.env.NULLBENCH_STUB_ECHO_CWD) {
   output += `\n<cwd-files>${readdirSync(process.cwd()).sort().join(",")}</cwd-files>`;
+}
+if (process.env.NULLBENCH_STUB_ECHO_SKILL_FILES) {
+  const skillDir = join(process.cwd(), "skill");
+  const files = existsSync(skillDir) ? walkSkillDirForEcho(skillDir).sort() : [];
+  output += `\n<skill-files>${files.join(",")}</skill-files>`;
 }
 // After the listing, deliberately -- see the header note.
 if (process.env.NULLBENCH_STUB_WRITE_CWD_FILE) {
