@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync, chmodSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync, chmodSync, existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, basename } from "node:path";
@@ -113,6 +113,29 @@ test("resolveSkill refuses skill_dir overlapping a protected path (nullbench.jso
   assert.throws(
     () => resolveSkill(dir, { skillDir: "wrapper2", protectedPaths: [join(dir, "wrapper2", "some-fixture")] }),
     RegistrationError, "must refuse when a declared fixture sits inside skill_dir");
+  rmSync(dir, { recursive: true, force: true });
+});
+
+// N1 (fix round 2): the overlap check compared resolved path STRINGS, not real-path
+// identity. On a case-insensitive filesystem (default macOS/APFS), "skill_dir": "Tasks"
+// is a different STRING than "tasks/sig.json"'s parent, so string comparison waves it
+// through -- but it is the SAME directory on disk, and every task file (a rubric, a
+// verifier pattern) would be copied into the treatment sandbox as part of "the skill".
+// Skipped, not failed, on a filesystem where this genuinely doesn't apply (case-sensitive
+// Linux, say) -- creating "Tasks" there makes a real, unrelated, empty directory, and
+// the scenario this test pins simply does not exist.
+test("resolveSkill refuses a case-variant of a protected path via real-path identity, not string comparison", (t) => {
+  const dir = tmp();
+  mkdirSync(join(dir, "tasks"));
+  writeFileSync(join(dir, "tasks", "sig.json"), "{}");
+  const caseInsensitive = existsSync(join(dir, "Tasks", "sig.json"));
+  if (!caseInsensitive) {
+    t.skip("filesystem is case-sensitive; the case-variant bypass this test pins does not apply here");
+    rmSync(dir, { recursive: true, force: true });
+    return;
+  }
+  const protectedPaths = [join(dir, "tasks", "sig.json")];
+  assert.throws(() => resolveSkill(dir, { skillDir: "Tasks", protectedPaths }), RegistrationError);
   rmSync(dir, { recursive: true, force: true });
 });
 

@@ -3,8 +3,8 @@
 // than injected wholesale. Both shapes collapse into one descriptor so prereg.mjs,
 // runner.mjs and cli.mjs don't need to branch on which one they were handed.
 
-import { readFileSync, readdirSync, lstatSync } from "node:fs";
-import { join, resolve, relative, isAbsolute, sep } from "node:path";
+import { readFileSync, readdirSync, lstatSync, realpathSync } from "node:fs";
+import { join, resolve, relative, isAbsolute, sep, dirname, basename } from "node:path";
 import { createHash } from "node:crypto";
 import { canonicalJSON } from "./canonical.mjs";
 import { RegistrationError } from "./errors.mjs";
@@ -13,10 +13,33 @@ import { FORBIDDEN } from "./leakage.mjs";
 const sha256 = (buf) => createHash("sha256").update(buf).digest("hex");
 const FORBIDDEN_NAMES = new Set(FORBIDDEN);
 
-// True when `child` is `ancestor` itself or nested anywhere inside it, computed by
-// resolved path rather than string prefix (so "/a/b" is not mistaken for inside "/a/bc").
+// Resolves every symlink AND canonicalizes case (on a case-insensitive filesystem, the
+// on-disk casing wins over whatever casing the caller typed) for the longest existing
+// prefix of `p`, then rejoins whatever doesn't exist yet lexically. A path that doesn't
+// exist at all can't alias anything real by definition, so there's nothing further to
+// resolve for the non-existent tail -- this only has to get the EXISTING part right.
+function realpathOrSelf(p) {
+  try {
+    return realpathSync.native(p);
+  } catch {
+    const parent = dirname(p);
+    if (parent === p) return p; // filesystem root; nothing left to walk up to
+    return join(realpathOrSelf(parent), basename(p));
+  }
+}
+
+// True when `child` is `ancestor` itself or nested anywhere inside it. Compared by REAL
+// path, not resolved-string: `resolve()`/`relative()` alone are lexical and never touch
+// the filesystem, so on a case-insensitive filesystem (default macOS/APFS) a
+// differently-cased alias of the same directory -- or a symlink standing in for it --
+// would compare as a different path while being the identical thing on disk. Both are
+// exactly the case this project can't afford to miss: they'd copy a task file, a
+// fixture, or the registration itself into the treatment sandbox while looking, by
+// string comparison alone, like a clean, unrelated directory.
 function isInside(ancestor, child) {
-  const rel = relative(resolve(ancestor), resolve(child));
+  const a = realpathOrSelf(resolve(ancestor));
+  const c = realpathOrSelf(resolve(child));
+  const rel = relative(a, c);
   return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 
@@ -36,10 +59,17 @@ function validateSkillDirPath(dir, skillDir, protectedPaths) {
   }
   const root = resolve(join(dir, skillDir));
   const suiteDir = resolve(dir);
-  const rel = relative(suiteDir, root);
+  // Compared by REAL path (resolves symlinks AND on-disk casing), not the lexical
+  // string `resolve()`/`relative()` alone would compare -- a case-insensitive
+  // filesystem's own alias of the suite directory, or an intermediate symlink standing
+  // in for one of skillDir's path components, would otherwise look like a clean strict
+  // subdirectory by string comparison while actually landing somewhere else entirely.
+  const realRoot = realpathOrSelf(root);
+  const realSuite = realpathOrSelf(suiteDir);
+  const rel = relative(realSuite, realRoot);
   // Catches what the segment checks above don't: a spelling like "sub/.." that resolves
-  // right back to the suite directory, or (belt and braces) any other escape the string
-  // checks missed.
+  // right back to the suite directory, an intermediate symlink that escapes it, or
+  // (belt and braces) any other escape the string checks missed.
   if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
     throw new RegistrationError([`"skill_dir" must resolve to a strict subdirectory of the registration directory, got "${skillDir}"`]);
   }
