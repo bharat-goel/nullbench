@@ -103,6 +103,7 @@ A `nullbench.json` committed to the repository **before** the run.
 | `tasks[].kind` | `signal` \| `harm` | what the task is for |
 | `tasks[].predict` | `helps` \| `no-effect` \| `harms` | mandatory, recorded whether or not it is borne out |
 | `skill_dir` | optional, non-empty string | relative to the registration's directory; when present, the skill under test is that whole directory rather than a single `SKILL.md` (§1.4) |
+| `h_version` | optional, `1` \| `2` | which registration-hash formula applies; absent means `1`. `2` also covers fixture contents and `canaries.json` (§3.1) |
 
 JSON rather than TOML because Node ships no TOML parser — TOML would cost this project
 its only runtime dependency — and, more importantly, because the hash in §3 requires a
@@ -153,7 +154,8 @@ exists to stop.
 
 ### 1.3 Canaries
 
-A suite with any judge-graded task should ship `canaries.json` beside the registration:
+A suite with any judge-graded task should ship `canaries.json` beside the registration
+(covered by `H` only under `"h_version": 2` — §3.1):
 
 ```json
 { "<task-id>": [ { "label": "obvious-pass", "reply": "...", "expect": "PASS" } ] }
@@ -365,6 +367,43 @@ Two properties follow, and both are deliberate:
 
 (The design document specified a concatenation over the whole registration file; §5.2
 there was amended to this formula on 2026-09-17, with the reasoning above.)
+
+### 3.1 `h_version` 2: fixtures and canaries
+
+The formula above is **version 1**, and it does not cover two things a run depends on:
+
+- **Fixture contents.** A fixture is copied into *both* arms' sandboxes. Only its declared
+  *name* is in `H` (through the task file's bytes); its files are not. A fixture could be
+  edited after freezing — including one that changes what the control arm can see — with
+  `H` unchanged.
+- **`canaries.json`.** The canary set is what certifies the judge. It could be edited after
+  freezing — say, relabelled to match how the judge actually behaved — with `H` unchanged.
+
+A registration opts into the stronger hash with `"h_version": 2` in `nullbench.json`:
+
+```
+H = sha256(canonical({
+      model, judge_model, reps, skill_sha256,
+      tasks: [ { id, kind, predict, sha256 } ],
+      h_version: 2,
+      fixtures: [ { name, sha256 } ],     // each distinct declared fixture, sorted by name
+      canaries_sha256                     // sha256 of canaries.json's bytes, or null if absent
+    }))
+```
+
+Each fixture's `sha256` is taken over a manifest built the same way as a `skill_dir`'s
+(§3 above): one `{ path, sha256 }` per regular file, sorted by full path after the walk.
+A symlink inside a fixture is recorded as `{ path, symlink: <target> }` rather than
+refused, because the sandbox receives the link itself. As with `skill_dir`, empty
+directories and file modes are not covered.
+
+**Why opt-in, not a change to version 1.** Folding these into the default formula would
+move `H` for every existing registration that has a fixture or a canary file, including
+ones whose runs are already published and ledgered under that `H`. A frozen `H` that
+changes when the tool is upgraded stops proving anything. So version 1 stays
+byte-identical, absent `h_version` means 1, and a v1 registration that has a fixture or
+`canaries.json` gets a preflight note saying what its `H` does not cover. **New
+registrations should declare `"h_version": 2`.** Any other value is a structural failure.
 
 ---
 

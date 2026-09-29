@@ -241,6 +241,14 @@ export async function main(argv, { stdout = process.stdout, stdin = process.stdi
     `  est. spend    ~$${(p.total * args.costPerCall).toFixed(2)} at an assumed ` +
     `$${args.costPerCall.toFixed(2)}/call — override with --cost-per-call\n`
   );
+  // v1 is the default and stays byte-identical to the H every existing registration was
+  // frozen under -- so say plainly what it does not name, whenever there is something
+  // it could have named.
+  const hasFixture = registration.tasks.some((t) => typeof t.spec?.fixture === "string");
+  if (registration.hVersion === 1 && (hasFixture || existsSync(cPath))) {
+    stdout.write(`  note          H (v1) does not cover ${[hasFixture && "fixture contents", existsSync(cPath) && "canaries.json"].filter(Boolean).join(" or ")}; ` +
+      `set "h_version": 2 in nullbench.json to include them\n`);
+  }
   if (registration.drift.length) {
     stdout.write(`  drift detected — this run cannot be confirmatory:\n`);
     for (const d of registration.drift) stdout.write(`    - ${d.detail}\n`);

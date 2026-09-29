@@ -490,3 +490,17 @@ test("CANARY DETAIL: misgraded canaries and the backend are named in records.jso
   assert.match(ledger(dir), /canary misgraded: jsig:bad \(expected FAIL, judge said PASS\)/);
   assert.match(ledger(dir), /backend=\S*stub-claude\.mjs/);
 });
+
+test("PREFLIGHT: a v1 registration with canaries says H does not cover them; h_version 2 does not", async () => {
+  const dir = makeSuite({ tasks: [JUDGE, HARM] });
+  writeFileSync(join(dir, "canaries.json"), JSON.stringify({ jsig: [{ label: "a", expect: "PASS", reply: "x" }] }));
+  const cap1 = capture();
+  assert.equal(await main([dir, "--dry-run"], cap1), 0);
+  assert.match(cap1.text(), /H \(v1\) does not cover canaries\.json; set "h_version": 2/);
+  const reg = JSON.parse(readFileSync(join(dir, "nullbench.json"), "utf8"));
+  reg.h_version = 2;
+  writeFileSync(join(dir, "nullbench.json"), JSON.stringify(reg));
+  const cap2 = capture();
+  assert.equal(await main([dir, "--dry-run"], cap2), 0);
+  assert.doesNotMatch(cap2.text(), /does not cover/);
+});

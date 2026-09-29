@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync, readFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync, readFileSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadRegistration, RegistrationError, patternDrift } from "../src/prereg.mjs";
@@ -343,4 +343,96 @@ test("a malformed task entry is a RegistrationError, not a TypeError escaping as
     );
   }
   rmSync(dir, { recursive: true, force: true });
+});
+
+// h_version 2: fixture contents and canaries.json enter H. v1 (the default) is left
+// byte-identical so no existing registration's H moves.
+function makeFixtureSuite({ hVersion } = {}) {
+  const dir = mkdtempSync(join(tmpdir(), "nb-hv2-"));
+  mkdirSync(join(dir, "tasks"));
+  mkdirSync(join(dir, "fx", "src"), { recursive: true });
+  writeFileSync(join(dir, "fx", "package.json"), '{"name":"fx"}');
+  writeFileSync(join(dir, "fx", "src", "a.js"), "export const a = 1;\n");
+  writeFileSync(join(dir, "SKILL.md"), "# demo\n");
+  const sig = JSON.stringify({ id: "sig", kind: "signal", prompt: "p", fixture: "fx", verify: { type: "judge", rubric: "R" } });
+  const sig2 = JSON.stringify({ id: "sig2", kind: "signal", prompt: "q", fixture: "fx", verify: { type: "judge", rubric: "R2" } });
+  const harm = JSON.stringify({ id: "harm", kind: "harm", prompt: "h", verify: { type: "none", patterns: ["x"], maxWords: 500 } });
+  writeFileSync(join(dir, "tasks", "sig.json"), sig);
+  writeFileSync(join(dir, "tasks", "sig2.json"), sig2);
+  writeFileSync(join(dir, "tasks", "harm.json"), harm);
+  const reg = {
+    model: "sonnet", judge_model: "sonnet", reps: 10,
+    tasks: [
+      { id: "sig", file: "tasks/sig.json", sha256: sha(sig), kind: "signal", predict: "helps" },
+      { id: "sig2", file: "tasks/sig2.json", sha256: sha(sig2), kind: "signal", predict: "helps" },
+      { id: "harm", file: "tasks/harm.json", sha256: sha(harm), kind: "harm", predict: "no-effect" },
+    ],
+  };
+  if (hVersion !== undefined) reg.h_version = hVersion;
+  writeFileSync(join(dir, "nullbench.json"), JSON.stringify(reg));
+  writeFileSync(join(dir, "canaries.json"), JSON.stringify({ sig: [{ label: "a", reply: "r", expect: "PASS" }] }));
+  return dir;
+}
+
+test("h_version absent and h_version 1 give the same H, which does not cover fixtures or canaries", () => {
+  const a = makeFixtureSuite();
+  const b = makeFixtureSuite({ hVersion: 1 });
+  const h = loadRegistration(a).hash;
+  assert.equal(loadRegistration(b).hash, h);
+  assert.equal(loadRegistration(a).hVersion, 1);
+  writeFileSync(join(a, "fx", "src", "a.js"), "export const a = 2;\n");
+  writeFileSync(join(a, "canaries.json"), JSON.stringify({ sig: [{ label: "a", reply: "r", expect: "FAIL" }] }));
+  assert.equal(loadRegistration(a).hash, h, "v1 is the documented gap: neither edit moves it");
+  for (const d of [a, b]) rmSync(d, { recursive: true, force: true });
+});
+
+test("h_version 2: editing any fixture file moves H, and so does renaming one", () => {
+  const dir = makeFixtureSuite({ hVersion: 2 });
+  const h0 = loadRegistration(dir).hash;
+  assert.notEqual(h0, loadRegistration(makeFixtureSuite()).hash, "v2 is a different H from v1");
+  writeFileSync(join(dir, "fx", "src", "a.js"), "export const a = 2;\n");
+  const h1 = loadRegistration(dir).hash;
+  assert.notEqual(h1, h0, "a nested fixture file's bytes are covered");
+  writeFileSync(join(dir, "fx", "src", "a.js"), "export const a = 1;\n");
+  assert.equal(loadRegistration(dir).hash, h0, "restoring the bytes restores H");
+  writeFileSync(join(dir, "fx", "src", "b.js"), "export const a = 1;\n");
+  rmSync(join(dir, "fx", "src", "a.js"));
+  assert.notEqual(loadRegistration(dir).hash, h0, "a rename is covered: paths are in the manifest");
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("h_version 2: editing, adding or removing canaries.json moves H", () => {
+  const dir = makeFixtureSuite({ hVersion: 2 });
+  const h0 = loadRegistration(dir).hash;
+  writeFileSync(join(dir, "canaries.json"), JSON.stringify({ sig: [{ label: "a", reply: "r", expect: "FAIL" }] }));
+  const h1 = loadRegistration(dir).hash;
+  assert.notEqual(h1, h0);
+  rmSync(join(dir, "canaries.json"));
+  const h2 = loadRegistration(dir).hash;
+  assert.notEqual(h2, h1);
+  assert.notEqual(h2, h0);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("h_version 2: a fixture shared by two tasks is hashed once, and a symlink by its target", () => {
+  const dir = makeFixtureSuite({ hVersion: 2 });
+  const h0 = loadRegistration(dir).hash;
+  symlinkSync("src/a.js", join(dir, "fx", "link.js"));
+  const h1 = loadRegistration(dir).hash;
+  assert.notEqual(h1, h0);
+  rmSync(join(dir, "fx", "link.js"));
+  symlinkSync("package.json", join(dir, "fx", "link.js"));
+  assert.notEqual(loadRegistration(dir).hash, h1, "a retargeted symlink moves H");
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("an h_version other than 1 or 2 is a structural failure", () => {
+  for (const bad of [0, 3, "2", null]) {
+    const dir = makeFixtureSuite();
+    const reg = JSON.parse(readFileSync(join(dir, "nullbench.json"), "utf8"));
+    reg.h_version = bad;
+    writeFileSync(join(dir, "nullbench.json"), JSON.stringify(reg));
+    assert.throws(() => loadRegistration(dir), RegistrationError, `h_version ${JSON.stringify(bad)}`);
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
