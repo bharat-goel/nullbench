@@ -70,7 +70,9 @@ export function canaryDetail(canary) {
   const L = [];
   for (const m of canary.misgrades ?? []) {
     if (m.id === "missing") continue;
-    const why = m.why ? ` — judge: ${String(m.why).replace(/\s+/g, " ").slice(0, 240)}` : "";
+    // runJudge already prefixes its reason with "judge: "; don't print it twice.
+    const reason = String(m.why ?? "").replace(/^judge:\s*/, "").replace(/\s+/g, " ").slice(0, 240);
+    const why = reason ? ` — judge: ${reason}` : "";
     L.push(`- misgraded \`${m.id}\`: expected ${m.expected}, judge said ${m.got}${why}`);
   }
   for (const d of canary.dead ?? []) {
@@ -140,7 +142,10 @@ export function renderReport({ rows, klass, reasons, warnings = [], requested, h
   if (canary) {
     L.push(canary.total === 0
       ? `Judge canaries: none found. An ungated judge is an unverified safeguard; judged tasks cannot be confirmed.`
-      : `Judge canaries: ${canary.total - canary.misgrades.length}/${canary.total} graded correctly.`, "");
+      // graded, not total: a canary that never answered was not graded correctly --
+      // it was not graded at all, and counting it as correct overstated the judge.
+      : `Judge canaries: ${(canary.graded ?? canary.total) - canary.misgrades.length}/${canary.graded ?? canary.total} graded correctly` +
+        (canary.dead?.length ? `; ${canary.dead.length} of ${canary.total} never answered.` : "."), "");
     const detail = canaryDetail(canary);
     if (detail.length) L.push(...detail, "");
     // Spec 6 entry 3 is an OPEN failure mode and requires disclosure in every report

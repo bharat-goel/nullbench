@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync, readFileSync, symlinkSync } from "node:fs";
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync, readFileSync, symlinkSync, cpSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { canonicalJSON } from "../src/canonical.mjs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadRegistration, RegistrationError, patternDrift } from "../src/prereg.mjs";
@@ -414,15 +416,94 @@ test("h_version 2: editing, adding or removing canaries.json moves H", () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-test("h_version 2: a fixture shared by two tasks is hashed once, and a symlink by its target", () => {
+// Pinned by independent construction, not by a literal captured from the code under
+// test: the expected body is rebuilt here from PROTOCOL §3/§3.1 alone. This pins the key
+// names and shape (so a silent change to either would fail), and -- because two tasks
+// share "fx" -- that a shared fixture appears in `fixtures` exactly once.
+function expectedHash(dir, hVersion) {
+  const reg = JSON.parse(readFileSync(join(dir, "nullbench.json"), "utf8"));
+  const tasks = reg.tasks.map((t) => ({ id: t.id, kind: t.kind, predict: t.predict, sha256: sha(readFileSync(join(dir, t.file))) }))
+    .sort((a, b) => (a.id < b.id ? -1 : 1));
+  const body = { model: "sonnet", judge_model: "sonnet", reps: 10, skill_sha256: sha(readFileSync(join(dir, "SKILL.md"))), tasks };
+  if (hVersion === 2) {
+    const manifest = [
+      { path: "package.json", sha256: sha(readFileSync(join(dir, "fx", "package.json"))) },
+      { path: "src/a.js", sha256: sha(readFileSync(join(dir, "fx", "src", "a.js"))) },
+    ];
+    body.h_version = 2;
+    body.fixtures = [{ name: "fx", sha256: sha(canonicalJSON(manifest)) }];
+    body.canaries_sha256 = sha(readFileSync(join(dir, "canaries.json")));
+  }
+  return sha(canonicalJSON(body));
+}
+
+test("pinned: v1 and v2 H match an independent construction from PROTOCOL §3/§3.1", () => {
+  const v1 = makeFixtureSuite();
+  const v2 = makeFixtureSuite({ hVersion: 2 });
+  assert.equal(loadRegistration(v1).hash, expectedHash(v1, 1));
+  assert.equal(loadRegistration(v2).hash, expectedHash(v2, 2), "one fixtures entry for fx, although two tasks declare it");
+  for (const d of [v1, v2]) rmSync(d, { recursive: true, force: true });
+});
+
+test("h_version 2: fixture manifest is sorted by full path ('a-b' before 'a/x')", () => {
   const dir = makeFixtureSuite({ hVersion: 2 });
-  const h0 = loadRegistration(dir).hash;
+  rmSync(join(dir, "fx"), { recursive: true, force: true });
+  mkdirSync(join(dir, "fx", "a"), { recursive: true });
+  writeFileSync(join(dir, "fx", "a", "x"), "1");
+  writeFileSync(join(dir, "fx", "a-b"), "2");
+  const manifest = [{ path: "a-b", sha256: sha("2") }, { path: "a/x", sha256: sha("1") }];
+  const reg = loadRegistration(dir);
+  const expected = (() => {
+    const r = JSON.parse(readFileSync(join(dir, "nullbench.json"), "utf8"));
+    const tasks = r.tasks.map((t) => ({ id: t.id, kind: t.kind, predict: t.predict, sha256: sha(readFileSync(join(dir, t.file))) }))
+      .sort((a, b) => (a.id < b.id ? -1 : 1));
+    return sha(canonicalJSON({ model: "sonnet", judge_model: "sonnet", reps: 10, skill_sha256: sha(readFileSync(join(dir, "SKILL.md"))), tasks,
+      h_version: 2, fixtures: [{ name: "fx", sha256: sha(canonicalJSON(manifest)) }], canaries_sha256: sha(readFileSync(join(dir, "canaries.json"))) }));
+  })();
+  assert.equal(reg.hash, expected);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("h_version 2: a symlink in a fixture, or a symlinked fixture root, is a structural failure", () => {
+  const dir = makeFixtureSuite({ hVersion: 2 });
   symlinkSync("src/a.js", join(dir, "fx", "link.js"));
-  const h1 = loadRegistration(dir).hash;
-  assert.notEqual(h1, h0);
+  assert.throws(() => loadRegistration(dir), (e) => e instanceof RegistrationError && /symlink at "link\.js"/.test(e.message));
   rmSync(join(dir, "fx", "link.js"));
-  symlinkSync("package.json", join(dir, "fx", "link.js"));
-  assert.notEqual(loadRegistration(dir).hash, h1, "a retargeted symlink moves H");
+  const real = join(dir, "fx-real");
+  cpSync(join(dir, "fx"), real, { recursive: true });
+  rmSync(join(dir, "fx"), { recursive: true, force: true });
+  symlinkSync(real, join(dir, "fx"));
+  assert.throws(() => loadRegistration(dir), (e) => e instanceof RegistrationError && /is a symlink/.test(e.message));
+  rmSync(dir, { recursive: true, force: true });
+  const v1 = makeFixtureSuite();
+  symlinkSync("src/a.js", join(v1, "fx", "link.js"));
+  assert.doesNotThrow(() => loadRegistration(v1), "the rule binds only h_version 2");
+  rmSync(v1, { recursive: true, force: true });
+});
+
+test("h_version 2: a FIFO in a fixture is a structural failure, not a hang", () => {
+  const dir = makeFixtureSuite({ hVersion: 2 });
+  execFileSync("mkfifo", [join(dir, "fx", "pipe")]);
+  assert.throws(() => loadRegistration(dir), (e) => e instanceof RegistrationError && /non-regular entry at "pipe"/.test(e.message));
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("h_version 2: a missing fixture hashes as null and a file fixture as its bytes, each distinctly", () => {
+  const dir = makeFixtureSuite({ hVersion: 2 });
+  const asDir = loadRegistration(dir).hash;
+  rmSync(join(dir, "fx"), { recursive: true, force: true });
+  const missing = loadRegistration(dir).hash;
+  writeFileSync(join(dir, "fx"), "a single file");
+  const asFile = loadRegistration(dir).hash;
+  assert.equal(new Set([asDir, missing, asFile]).size, 3);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("h_version 2: a canaries.json that is a directory is a RegistrationError, not a raw EISDIR", () => {
+  const dir = makeFixtureSuite({ hVersion: 2 });
+  rmSync(join(dir, "canaries.json"));
+  mkdirSync(join(dir, "canaries.json"));
+  assert.throws(() => loadRegistration(dir), (e) => e instanceof RegistrationError && /canaries\.json exists but is not a regular file/.test(e.message));
   rmSync(dir, { recursive: true, force: true });
 });
 

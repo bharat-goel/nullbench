@@ -174,9 +174,12 @@ suite with no `canaries.json` is not a structural failure: it is the explicitly 
 state, reported as such and unable to be confirmed.
 
 **Which canaries failed is kept, not only how many.** Every canary the judge misgraded is
-named, with the expected verdict, the judge's verdict, and the judge's stated reason, in the
-report (every class, VOID included), as a `canary misgraded:` line in the ledger entry, and
-whole under `canary` in `records.json`, along with any canary call that never answered. A
+named with the expected verdict, the judge's verdict and the judge's stated reason, and
+every canary call that never answered is named too, in the report (every class, VOID
+included) and whole under `canary` in `records.json`. The ledger entry carries one
+`canary misgraded:` line per misgrade (id, expected, judge's verdict; not the reason).
+Each canary's `label` must be a non-empty single-line string and its `expect` `PASS` or
+`FAIL` (any case); anything else is a structural failure. A
 count alone cannot say whether the judge erred strict or lenient, or on which rubric, and
 recovering that would mean paying for the canaries again. (An audit lost exactly this from
 three paid runs before it was recorded.)
@@ -393,9 +396,17 @@ H = sha256(canonical({
 
 Each fixture's `sha256` is taken over a manifest built the same way as a `skill_dir`'s
 (§3 above): one `{ path, sha256 }` per regular file, sorted by full path after the walk.
-A symlink inside a fixture is recorded as `{ path, symlink: <target> }` rather than
-refused, because the sandbox receives the link itself. As with `skill_dir`, empty
-directories and file modes are not covered.
+Two other cases: a fixture that is a single regular file hashes as that file's bytes, and
+a declared fixture that does not exist hashes to `null` (preflight rejects it for any task
+that runs; a `--task` run that skips its owner leaves it `null` in `H`). As with
+`skill_dir`, empty directories and file modes are not covered.
+
+**Under `h_version` 2 a symlink anywhere in a fixture, or a symlinked fixture root, is a
+structural failure.** Recording a link's target string would not cover what the run reads:
+the copy into the sandbox rewrites a relative link into an absolute path back into the
+source tree, so the run reads the live file behind it — possibly outside the fixture —
+whose bytes `H` never saw. A `canaries.json` that exists but is not a readable regular file
+is likewise structural. Neither rule applies to version 1.
 
 **Why opt-in, not a change to version 1.** Folding these into the default formula would
 move `H` for every existing registration that has a fixture or a canary file, including

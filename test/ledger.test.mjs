@@ -167,3 +167,11 @@ test("an entry without a backend keeps the original model line", () => {
   assert.match(readFileSync(p, "utf8"), /^model=sonnet judge=sonnet reps=10$/m);
   rmSync(dir, { recursive: true, force: true });
 });
+
+test("a backend name with whitespace is quoted so the config line still parses", () => {
+  const dir = mkdtempSync(join(tmpdir(), "nb-led-"));
+  const p = join(dir, "LEDGER.md");
+  appendEntry(p, { ...base, rows: rows(), requested: { ...base.requested, backend: "my adapter.mjs" } });
+  assert.match(readFileSync(p, "utf8"), /backend="my adapter\.mjs"$/m);
+  rmSync(dir, { recursive: true, force: true });
+});

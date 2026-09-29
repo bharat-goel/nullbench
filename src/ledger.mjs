@@ -44,7 +44,7 @@ export function appendEntry(path, { stamp, klass, hash, requested, rows, reasons
   // the registered ones, and without this line a ledger entry for a run answered by a
   // local model is indistinguishable from one answered by the hosted model it names.
   L.push(`model=${requested.model} judge=${requested.judgeModel} reps=${requested.reps}` +
-    (requested.backend ? ` backend=${requested.backend}` : ""));
+    (requested.backend ? ` backend=${/[\s"]/.test(requested.backend) ? JSON.stringify(requested.backend) : requested.backend}` : ""));
   for (const r of rows) {
     const note = r.discriminating ? "" : "  (non-discriminating)";
     L.push(

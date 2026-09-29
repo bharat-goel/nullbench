@@ -2,7 +2,7 @@
 
 import { mkdirSync, writeFileSync, existsSync, mkdtempSync, cpSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve, dirname } from "node:path";
+import { join, resolve, dirname, basename } from "node:path";
 import { loadRegistration, patternDrift, RegistrationError } from "./prereg.mjs";
 import { runSuite, gradedCounts } from "./runner.mjs";
 import { runCanaries, loadCanaries } from "./judge.mjs";
@@ -127,7 +127,11 @@ export async function main(argv, { stdout = process.stdout, stdin = process.stdi
     // Set only when NULLBENCH_CLAUDE_BIN replaced the hosted CLI. The model names above
     // are then the REGISTERED ones, not verified to be what answered: the 2026-09-18
     // bracket runs were answered by a local gemma model and recorded as "sonnet".
-    ...(process.env.NULLBENCH_CLAUDE_BIN ? { backend: binaryPath() } : {}),
+    // Recorded as the basename: enough to name the adapter, without writing the
+    // operator's home-directory layout into a ledger that gets committed. A bare
+    // `claude` is the hosted CLI itself, not an override.
+    ...(process.env.NULLBENCH_CLAUDE_BIN && process.env.NULLBENCH_CLAUDE_BIN !== "claude"
+      ? { backend: basename(binaryPath()) } : {}),
   };
 
   // Structural, not drift: an unknown id and a missing SKILL.md both mean the run

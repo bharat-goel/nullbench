@@ -85,7 +85,18 @@ export function loadCanaries(path, registration) {
     const task = byId.get(taskId);
     if (!task) { problems.push(`canary references task "${taskId}", which is not registered`); continue; }
     if (task.spec.verify.type !== "judge") { problems.push(`canary references task "${taskId}", which is not judge-graded`); continue; }
-    for (const e of entries) {
+    if (!Array.isArray(entries)) { problems.push(`canaries for task "${taskId}" must be an array`); continue; }
+    for (const [i, e] of entries.entries()) {
+      // Validated rather than coerced: an "expect" that is neither PASS nor FAIL used to
+      // be read silently as FAIL, and a label with a newline split its ledger line.
+      if (typeof e?.label !== "string" || !e.label || /[\r\n]/.test(e.label)) {
+        problems.push(`canary ${taskId}[${i}]: "label" must be a non-empty single-line string`);
+        continue;
+      }
+      if (typeof e.expect !== "string" || !/^(pass|fail)$/i.test(e.expect)) {
+        problems.push(`canary ${taskId}:${e.label}: "expect" must be PASS or FAIL`);
+        continue;
+      }
       out.push({ id: `${taskId}:${e.label}`, task: taskId, prompt: task.spec.prompt, rubric: task.spec.verify.rubric, reply: e.reply, expect: e.expect });
     }
   }
@@ -131,7 +142,7 @@ export async function runCanaries({ canaries, model, cwd = null, repoRoot = null
     // API was. Observed live: a session limit mid-batch turned 13/13 into 7/13, and the
     // six "misgrades" were all calls that never reached the model.
     if (got.failed) { dead.push({ id: c.id, why: got.why }); continue; }
-    if (got.pass !== expected) misgrades.push({ id: c.id, expected: c.expect, got: got.pass ? "PASS" : "FAIL", why: got.why });
+    if (got.pass !== expected) misgrades.push({ id: c.id, expected: expected ? "PASS" : "FAIL", got: got.pass ? "PASS" : "FAIL", why: got.why });
   }
   // `ok` requires that the canaries actually ran. An ungated judge and an unverifiable
   // one are equally unconfirmable, and neither may pass silently.

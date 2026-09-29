@@ -204,3 +204,15 @@ test("the header names a NULLBENCH_CLAUDE_BIN backend when one answered", () => 
   const local = renderReport({ rows: aggregate(records(), tasks), klass: "CONFIRMATORY", reasons: [], requested: { ...req, backend: "/x/local-claude.mjs" }, hash: "e".repeat(64), canary: null });
   assert.match(local, /backend `\/x\/local-claude\.mjs` \(NULLBENCH_CLAUDE_BIN override/);
 });
+
+test("a judge reason already prefixed 'judge:' is not printed twice; dead canaries are not counted correct", () => {
+  const md = renderReport({
+    rows: aggregate(records(), tasks), klass: "EXPLORATORY", reasons: ["x"],
+    requested: { reps: 10, model: "sonnet", judgeModel: "sonnet" }, hash: "f".repeat(64),
+    canary: { ok: false, total: 4, graded: 3, dead: [{ id: "sig:gone", why: "judge failed to run" }],
+      misgrades: [{ id: "sig:a", expected: "FAIL", got: "PASS", why: "judge: fine" }] },
+  });
+  assert.match(md, /— judge: fine/);
+  assert.doesNotMatch(md, /judge: judge:/);
+  assert.match(md, /Judge canaries: 2\/3 graded correctly; 1 of 4 never answered\./);
+});

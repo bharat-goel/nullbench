@@ -484,7 +484,7 @@ test("CANARY DETAIL: misgraded canaries and the backend are named in records.jso
   const [stampDir] = readdirSync(join(dir, "results"));
   const rec = JSON.parse(readFileSync(join(dir, "results", stampDir, "records.json"), "utf8"));
   assert.deepEqual(rec.canary.misgrades.map((m) => [m.id, m.expected, m.got]), [["jsig:bad", "FAIL", "PASS"]]);
-  assert.ok(rec.requested.backend.endsWith("stub-claude.mjs"), "the stub backend is recorded");
+  assert.equal(rec.requested.backend, "stub-claude.mjs", "recorded by basename, not the operator's full path");
   assert.match(cap.text(), /misgraded `jsig:bad`: expected FAIL, judge said PASS/);
   assert.match(cap.text(), /backend `[^`]*stub-claude\.mjs`/);
   assert.match(ledger(dir), /canary misgraded: jsig:bad \(expected FAIL, judge said PASS\)/);
@@ -503,4 +503,14 @@ test("PREFLIGHT: a v1 registration with canaries says H does not cover them; h_v
   const cap2 = capture();
   assert.equal(await main([dir, "--dry-run"], cap2), 0);
   assert.doesNotMatch(cap2.text(), /does not cover/);
+});
+
+test("PREFLIGHT: a canary whose expect is not PASS/FAIL, or whose label spans lines, fails the dry run", async () => {
+  for (const bad of [{ label: "a", expect: "maybe", reply: "x" }, { label: "a\nb", expect: "PASS", reply: "x" }]) {
+    const dir = makeSuite({ tasks: [JUDGE, HARM] });
+    writeFileSync(join(dir, "canaries.json"), JSON.stringify({ jsig: [bad] }));
+    const cap = capture();
+    assert.equal(await main([dir, "--dry-run"], cap), 2, JSON.stringify(bad));
+    assert.match(cap.text(), /"expect" must be PASS or FAIL|"label" must be a non-empty single-line string/);
+  }
 });

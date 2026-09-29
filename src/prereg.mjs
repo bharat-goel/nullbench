@@ -11,7 +11,7 @@
 // necessary phase, or let a changed task pass as confirmed, which is the whole thing
 // this project exists to stop.
 
-import { readFileSync, existsSync, readdirSync, lstatSync, readlinkSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync, lstatSync } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { canonicalJSON } from "./canonical.mjs";
@@ -155,8 +155,7 @@ export function loadRegistration(dir, skillFile = null) {
     const fixtureNames = [...new Set(tasks.filter((t) => typeof t.spec?.fixture === "string").map((t) => t.spec.fixture))].sort();
     hashed.h_version = 2;
     hashed.fixtures = fixtureNames.map((name) => ({ name, sha256: hashTree(join(dir, name)) }));
-    const cPath = join(dir, "canaries.json");
-    hashed.canaries_sha256 = existsSync(cPath) ? sha256(readFileSync(cPath)) : null;
+    hashed.canaries_sha256 = hashCanaries(join(dir, "canaries.json"));
   }
   const body = canonicalJSON(hashed);
   const hash = sha256(Buffer.from(body, "utf8"));
@@ -174,16 +173,40 @@ export function loadRegistration(dir, skillFile = null) {
   };
 }
 
+// canaries.json's bytes (h_version 2 only), or null when there is none. Anything that
+// exists but cannot be read as a file -- a directory, a permissions error -- is a
+// structural failure (exit 2), never a raw exception escaping as exit 1, which is VOID's
+// code.
+function hashCanaries(path) {
+  let st;
+  try { st = lstatSync(path); } catch { return null; }
+  if (!st.isFile()) throw new RegistrationError([`canaries.json exists but is not a regular file; it cannot be hashed`]);
+  try {
+    return sha256(readFileSync(path));
+  } catch (e) {
+    throw new RegistrationError([`canaries.json could not be read for hashing: ${e.message}`]);
+  }
+}
+
 // A fixture's contents, as one hash (h_version 2 only). Same shape as a skill_dir
-// manifest -- `{ path, sha256 }` per regular file, sorted by full path after the walk --
-// with two differences that follow from what a fixture is. A symlink is recorded by its
-// target string (`{ path, symlink }`) rather than refused, because fixtures predate this
-// and refusing would turn a hash into a new structural rule; cpSync copies the link as a
-// link, so its target is what the sandbox sees. And an absent fixture hashes to null:
-// the CLI's own preflight already reports it as a structural failure. Empty directories
-// and file modes are not covered, exactly as for skill_dir (§3).
+// manifest -- `{ path, sha256 }` per regular file, sorted by full path after the walk.
+//
+// A symlink anywhere in a v2 fixture is a structural failure. Recording the link's
+// target string would not cover what the sandbox reads: cpSync rewrites a relative link
+// to an absolute path back into the SOURCE tree, so the run follows it to the live file
+// (possibly outside the fixture altogether), whose bytes H would never see. v1 is left
+// as it was; this rule only binds a registration that asked for the stronger hash.
+//
+// Two non-manifest cases, both documented in §3.1: an absent fixture hashes to null
+// (preflight reports it as structural for any task that runs; a --task run that skips
+// its owner leaves it null in H), and a fixture that is a single regular file hashes as
+// that file's bytes. Empty directories and file modes are not covered, as for skill_dir.
 function hashTree(root) {
-  if (!existsSync(root)) return null;
+  let rootStat;
+  try { rootStat = lstatSync(root); } catch { return null; }
+  if (rootStat.isSymbolicLink()) {
+    throw new RegistrationError([`fixture "${root}" is a symlink; refused under h_version 2`]);
+  }
   const entries = [];
   const walk = (rel) => {
     const abs = rel ? join(root, rel) : root;
@@ -191,14 +214,15 @@ function hashTree(root) {
       const childRel = rel ? `${rel}/${name}` : name;
       const childAbs = join(abs, name);
       const st = lstatSync(childAbs);
-      if (st.isSymbolicLink()) entries.push({ path: childRel, symlink: readlinkSync(childAbs) });
+      if (st.isSymbolicLink()) throw new RegistrationError([`fixture contains a symlink at "${childRel}"; refused under h_version 2, because the sandbox would read through it to bytes H does not cover`]);
       else if (st.isDirectory()) walk(childRel);
       else if (st.isFile()) entries.push({ path: childRel, sha256: sha256(readFileSync(childAbs)) });
       else throw new RegistrationError([`fixture contains a non-regular entry at "${childRel}"; it cannot be hashed`]);
     }
   };
   try {
-    if (!lstatSync(root).isDirectory()) return sha256(readFileSync(root));
+    if (rootStat.isFile()) return sha256(readFileSync(root));
+    if (!rootStat.isDirectory()) throw new RegistrationError([`fixture "${root}" is neither a file nor a directory; it cannot be hashed`]);
     walk("");
   } catch (e) {
     if (e instanceof RegistrationError) throw e;
