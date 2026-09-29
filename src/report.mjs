@@ -60,11 +60,39 @@ const HEADERS = {
   VOID: "Too few graded runs to report anything.",
 };
 
+// Which canaries the judge got wrong, by name. The count alone ("23/26") is not
+// evidence anyone can act on: it cannot say whether the judge was too strict or too
+// lenient, or on which rubric, and re-deriving it means paying for the canaries again.
+// Printed in every class of report, VOID included -- a VOID batch's canaries were paid
+// for too.
+export function canaryDetail(canary) {
+  if (!canary) return [];
+  const L = [];
+  for (const m of canary.misgrades ?? []) {
+    if (m.id === "missing") continue;
+    const why = m.why ? ` — judge: ${String(m.why).replace(/\s+/g, " ").slice(0, 240)}` : "";
+    L.push(`- misgraded \`${m.id}\`: expected ${m.expected}, judge said ${m.got}${why}`);
+  }
+  for (const d of canary.dead ?? []) {
+    L.push(`- never answered \`${typeof d === "string" ? d : d.id}\``);
+  }
+  return L;
+}
+
+// A NULLBENCH_CLAUDE_BIN override means the model name printed is the one REGISTERED,
+// not necessarily the one that answered -- a local model behind an adapter reports as
+// "sonnet" otherwise. See FAILURES.md / PROTOCOL.md §7.
+export function backendNote(requested) {
+  return requested.backend
+    ? ` · backend \`${requested.backend}\` (NULLBENCH_CLAUDE_BIN override — the model named here is the registered one, not verified to be what answered)`
+    : "";
+}
+
 export function renderReport({ rows, klass, reasons, warnings = [], requested, hash, canary }) {
   const L = [];
   L.push(`# nullbench report — ${klass}`, "");
   L.push(HEADERS[klass], "");
-  L.push(`Registration \`${hash.slice(0, 16)}\` · model \`${requested.model}\` · judge \`${requested.judgeModel}\` · reps ${requested.reps}`, "");
+  L.push(`Registration \`${hash.slice(0, 16)}\` · model \`${requested.model}\` · judge \`${requested.judgeModel}\` · reps ${requested.reps}${backendNote(requested)}`, "");
 
   if (reasons.length) {
     L.push(`## Why this run is ${klass.toLowerCase()}`, "");
@@ -78,7 +106,11 @@ export function renderReport({ rows, klass, reasons, warnings = [], requested, h
     for (const w of warnings) L.push(`- ${w}`);
     L.push("");
   }
-  if (klass === "VOID") return L.join("\n");
+  if (klass === "VOID") {
+    const detail = canaryDetail(canary);
+    if (detail.length) L.push("## Judge canaries", "", ...detail, "");
+    return L.join("\n");
+  }
 
   const table = (kind, title) => {
     const rs = rows.filter((r) => r.kind === kind);
@@ -109,6 +141,8 @@ export function renderReport({ rows, klass, reasons, warnings = [], requested, h
     L.push(canary.total === 0
       ? `Judge canaries: none found. An ungated judge is an unverified safeguard; judged tasks cannot be confirmed.`
       : `Judge canaries: ${canary.total - canary.misgrades.length}/${canary.total} graded correctly.`, "");
+    const detail = canaryDetail(canary);
+    if (detail.length) L.push(...detail, "");
     // Spec 6 entry 3 is an OPEN failure mode and requires disclosure in every report
     // that used a judge. A blind spot shared by judge and subject cannot show up in a
     // canary, because canaries are hand-written to probe known failure modes.

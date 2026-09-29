@@ -171,6 +171,14 @@ malformed file costs nothing. They are *run* only after confirmation. A judge-gr
 suite with no `canaries.json` is not a structural failure: it is the explicitly un-gated
 state, reported as such and unable to be confirmed.
 
+**Which canaries failed is kept, not only how many.** Every canary the judge misgraded is
+named, with the expected verdict, the judge's verdict, and the judge's stated reason, in the
+report (every class, VOID included), as a `canary misgraded:` line in the ledger entry, and
+whole under `canary` in `records.json`, along with any canary call that never answered. A
+count alone cannot say whether the judge erred strict or lenient, or on which rubric, and
+recovering that would mean paying for the canaries again. (An audit lost exactly this from
+three paid runs before it was recorded.)
+
 ### 1.4 `skill_dir`
 
 A real Claude Code skill is often more than one file: `SKILL.md` plus a `references/` or
@@ -403,8 +411,9 @@ data problem rather than a registration problem, and it takes precedence — a b
 both drifted and 83% dead is VOID, because the registration question is moot when there is
 no data to classify.
 
-**No per-task figures and no average are reported.** The report stops after the header and
-the reasons list; there is no table, and there is no `n/a` cell, because there is no table
+**No per-task figures and no average are reported.** The report stops after the header,
+the reasons list, and — when any canary was misgraded or never answered — the list of which
+ones (§1.3); there is no table, and there is no `n/a` cell, because there is no table
 to put one in. What a reader needs is still printed: the reasons list names every thin
 cell as `task "<id>" <arm>: <k> graded runs, <n> required`, and the same reasons are
 written into the ledger entry. The run appends to the ledger like any other. **Exit 1.**
@@ -497,12 +506,19 @@ can see the runs that did not make the README.
 ## <ISO 8601 UTC timestamp> · <CLASS> · H=<first 16 hex of H>
 ```
 ```
-model=<model> judge=<judge_model> reps=<reps>
+model=<model> judge=<judge_model> reps=<reps>[ backend=<path>]
 <task-id>            <kind>  predict=<predict>  <k>/<n> -> <k>/<n>   <delta>pp [<lo>pp, <hi>pp]  <HIT|MISS>[  (non-discriminating)]
 ...
 average across signal tasks: suppressed — <reason>
 note: <each reason and warning, one per line>
+canary misgraded: <task-id>:<label> (expected <PASS|FAIL>, judge said <PASS|FAIL>)
 ```
+
+`backend=` appears only when `NULLBENCH_CLAUDE_BIN` replaced the hosted `claude` CLI. The
+model names on that line are the *registered* ones; with an override, nothing verifies that
+the model that answered is the one named. The report header carries the same note, and
+`records.json` records it as `requested.backend`. Without it, the 2026-09-18 bracket runs —
+answered by a local 12B model through an adapter — were ledgered as `model=sonnet`.
 
 A prediction scores **HIT** when the observed interval agrees with what was declared:
 `helps` needs an interval entirely above zero, `harms` entirely below, `no-effect` an

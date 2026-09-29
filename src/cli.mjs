@@ -9,6 +9,7 @@ import { runCanaries, loadCanaries } from "./judge.mjs";
 import { classify } from "./classify.mjs";
 import { aggregate, renderReport } from "./report.mjs";
 import { appendEntry } from "./ledger.mjs";
+import { binaryPath } from "./claude.mjs";
 import { distinctiveTermsForSkill, scanControlLeakage, assertIsolated } from "./leakage.mjs";
 import { combinedSkillText, skillFilePaths } from "./skill.mjs";
 
@@ -123,6 +124,10 @@ export async function main(argv, { stdout = process.stdout, stdin = process.stdi
     // file's contents, but a reader comparing two reports needs to see that the skill
     // came from somewhere other than the registered location.
     skillOverride,
+    // Set only when NULLBENCH_CLAUDE_BIN replaced the hosted CLI. The model names above
+    // are then the REGISTERED ones, not verified to be what answered: the 2026-09-18
+    // bracket runs were answered by a local gemma model and recorded as "sonnet".
+    ...(process.env.NULLBENCH_CLAUDE_BIN ? { backend: binaryPath() } : {}),
   };
 
   // Structural, not drift: an unknown id and a missing SKILL.md both mean the run
@@ -307,9 +312,11 @@ export async function main(argv, { stdout = process.stdout, stdin = process.stdi
     }
     md = renderReport({ rows, klass, reasons, warnings, registration, requested, hash: registration.hash, canary });
     writeFileSync(join(outDir, "report.md"), md);
-    writeFileSync(join(outDir, "records.json"), JSON.stringify({ stamp, hash: registration.hash, klass, requested, records }, null, 2));
+    // canary is saved whole -- which checks misgraded, what the judge said, which never
+    // answered -- so the evidence a paid canary pass produced is not reduced to a count.
+    writeFileSync(join(outDir, "records.json"), JSON.stringify({ stamp, hash: registration.hash, klass, requested, canary, records }, null, 2));
   } finally {
-    appendEntry(join(dir, "LEDGER.md"), { stamp, klass, hash: registration.hash, requested, rows, reasons: [...reasons, ...warnings] });
+    appendEntry(join(dir, "LEDGER.md"), { stamp, klass, hash: registration.hash, requested, rows, reasons: [...reasons, ...warnings], canary });
   }
 
   stdout.write(`${md}\n`);
