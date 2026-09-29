@@ -313,7 +313,10 @@ test("hashSkill refuses a symlinked skill_dir root, not just a symlink somewhere
   rmSync(dir, { recursive: true, force: true });
 });
 
-test("hashSkill throws (never returns null) on a read error inside an existing skill_dir", () => {
+// chmod 000 does not stop root from reading, so under root (a CI container, say) the
+// file stays readable and there is no read error to observe. Skipped there, not faked.
+test("hashSkill throws (never returns null) on a read error inside an existing skill_dir",
+  { skip: process.getuid?.() === 0 ? "running as root: chmod 000 does not make a file unreadable" : false }, () => {
   const dir = tmp();
   makeSkillDir(dir);
   chmodSync(join(dir, "skill", "references", "foo.md"), 0o000);
