@@ -76,7 +76,11 @@ export function resumeProblems({ prior, registration, requested, dir }) {
       for (const id of before.keys()) {
         if (!registration.tasks.some((t) => t.id === id)) detail.push(`task "${id}" is no longer registered`);
       }
-      if (was.skill_sha256 !== registration.skillSha) detail.push("SKILL.md changed");
+      // skillSha covers every file in a skill_dir, so name the directory: "SKILL.md
+      // changed" would send the reader to a file that may be untouched.
+      if (was.skill_sha256 !== registration.skillSha) {
+        detail.push(registration.registeredSkillDir ? `skill_dir "${registration.registeredSkillDir}" changed` : "SKILL.md changed");
+      }
       if (was.config && JSON.stringify(was.config) !== JSON.stringify(registration.config)) {
         detail.push("model, judge_model or reps in nullbench.json changed");
       }
