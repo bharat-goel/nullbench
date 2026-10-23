@@ -100,6 +100,11 @@ export function resumeProblems({ prior, registration, requested, dir }) {
   if (!same([...(was.taskIds ?? [])].sort(), [...requested.taskIds].sort())) {
     problems.push(`task set differs: ${prior.stamp} ran [${(was.taskIds ?? []).join(",")}], this run would use [${requested.taskIds.join(",")}]`);
   }
+  // The registered model name does not say what answered when NULLBENCH_CLAUDE_BIN is
+  // set (PROTOCOL.md §7), so a batch spliced across two backends would read as one.
+  if (!same(was.backend, requested.backend)) {
+    problems.push(`backend differs: ${prior.stamp} ran ${was.backend ?? "the hosted CLI"}, this run would use ${requested.backend ?? "the hosted CLI"}`);
+  }
   if (!same(was.skillOverride, requested.skillOverride)) {
     problems.push(`skill override differs: ${prior.stamp} ran ${was.skillOverride ?? "the registered SKILL.md"}, this run would use ${requested.skillOverride ?? "the registered SKILL.md"}`);
   }

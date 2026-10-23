@@ -203,6 +203,25 @@ test("REFUSED: a changed file in skill_dir, not only its SKILL.md, cannot be res
   assert.equal(runs(dir).length, 1, "a refused resume writes no run");
 });
 
+// The backend is the one config field the registered model name does not capture: a
+// batch half-answered by a local adapter and half by the hosted CLI would read "sonnet"
+// throughout. Splicing two backends into one number is exactly what resume must refuse.
+// The refusal comes before any spend, so the other backend is never invoked.
+test("REFUSED: a resume under a different NULLBENCH_CLAUDE_BIN backend cannot be resumed", async () => {
+  const dir = makeSuite({ tasks: ALL });
+  useStub(dir, WORKING);
+  const first = await interrupted(dir, 15);
+  assert.equal(first.requested.backend, "stub-claude.mjs");
+
+  const before = calls(dir);
+  process.env.NULLBENCH_CLAUDE_BIN = join(dir, "other-adapter.mjs");
+  const cap = capture();
+  assert.equal(await main([dir, "--yes", "--resume", first.stamp], cap), 2);
+  assert.match(cap.text(), /backend differs: .* ran stub-claude\.mjs, this run would use other-adapter\.mjs/);
+  assert.equal(calls(dir), before, "nothing was spent");
+  assert.equal(runs(dir).length, 1);
+});
+
 test("REFUSED: the same run cannot be resumed twice; the resume is resumed instead", async () => {
   const dir = makeSuite({ tasks: ALL });
   useStub(dir, WORKING);

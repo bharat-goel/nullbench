@@ -740,9 +740,11 @@ Each of these exits 2 and spends nothing:
   `model`/`judge_model`/`reps` in `nullbench.json` moves `H` (§3), and the refusal names
   what changed. Updating a task's declared `sha256` to match does not help: `H` is over
   the bytes on disk.
-- **A different requested config** — model, judge model, reps, task set, or skill
-  override — even where `H` would allow it, because the carried records were produced
-  under the earlier one.
+- **A different requested config** — model, judge model, reps, task set, skill
+  override, or backend (`NULLBENCH_CLAUDE_BIN`, §7) — even where `H` would allow it,
+  because the carried records were produced under the earlier one. The backend matters
+  most: the registered model name does not change when an adapter answers instead, so
+  a batch spliced across two backends would read as one.
 - **A run that has already been resumed.** Resuming the same run twice would draw its
   dead cells twice and let the second draw replace the first. Resume the resume instead;
   the chain may be as long as needed.
