@@ -669,7 +669,8 @@ that produced it. The superseded dead records are listed under `reattempted` in 
 
 Each of these exits 2 and spends nothing:
 
-- **A different registration hash `H`.** Any change to a task file, `SKILL.md`, or
+- **A different registration hash `H`.** Any change to a task file, the skill
+  (`SKILL.md`, or any file under a registered `skill_dir`, §1.4), or
   `model`/`judge_model`/`reps` in `nullbench.json` moves `H` (§3), and the refusal names
   what changed. Updating a task's declared `sha256` to match does not help: `H` is over
   the bytes on disk.

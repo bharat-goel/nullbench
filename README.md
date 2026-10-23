@@ -59,7 +59,7 @@ node bin/nullbench.mjs ./my-suite --resume 2026-09-24T18:02:11Z
 ```
 
 Only the runs that produced no answer are re-attempted; every graded run, pass or fail, is
-carried forward unchanged. The resume is refused if a task file, `SKILL.md` or
+carried forward unchanged. The resume is refused if a task file, the skill (any file in it) or
 `nullbench.json` changed, or if the model, judge model or reps differ. The canaries are
 re-run in full, the ledger gets a separate entry linked to the original, and the report
 names every run that contributed records. `records.json` is checkpointed after every
