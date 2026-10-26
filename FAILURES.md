@@ -60,6 +60,17 @@ the skill — and nothing more. A paraphrase, a synonym, or a word the skill mer
 likelier all pass the check and still hand the treatment arm its answer. `mitigated`
 rather than `caught` for exactly that reason.
 
+The same answer key can sit in a judge rubric, where there is no pattern to check:
+*PASS if the reply says to run `scripts/run_all.py`*. In skill-audit's
+uap-release-analyzer run, 29 of the treatment arm's 34 extra passes came from three
+rubrics of that shape, and the audit found it only by counting file names in replies by
+hand. `RUBRIC_TERM_IN_SKILL` now flags it at preflight: a signal task's rubric that
+grades an identifier-like term — a file, path, package or code name — found in the skill
+but in neither the prompt nor the fixture. It is a warning, not drift, because the same
+shape is sometimes the honest test of a reference skill (skill-audit's otel-go run: the
+lift was real, and came from the reference files' release notes). It does not see a
+rubric that asks for a fact in the skill's prose.
+
 ### 2. Loose substring matching
 
 **What it looks like from the inside.** The pattern list looks fine when you read it. It
