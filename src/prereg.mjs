@@ -149,7 +149,7 @@ export function loadRegistration(dir, skillFile = null) {
 
   return {
     config: { model: raw.model, judge_model: raw.judge_model, reps: raw.reps },
-    tasks, hash, drift, skill, registeredSkillDir,
+    tasks, hash, drift, skill, skillSha, registeredSkillDir,
   };
 }
 

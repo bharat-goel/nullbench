@@ -85,6 +85,13 @@ export function gradedCounts(records) {
 export async function runSuite({
   registration, requested, skillFile, fixtureRoot = ".", repoRoot = fixtureRoot, rawDir = null,
   concurrency = 4, onProgress = () => {},
+  // Resume support (PROTOCOL.md §10). `slots` restricts the batch to the listed
+  // {task, cond, rep} cells -- the dead ones from an earlier run -- instead of every
+  // cell. `stamp` tags each record with the run that produced it, so a combined
+  // records.json can say which run every observation came from. `onRecord` fires once
+  // per record as it lands; the CLI uses it to checkpoint records.json, so a process
+  // killed mid-batch still leaves every graded run on disk.
+  slots = null, stamp = null, onRecord = () => {},
 }) {
   // skillFile is either a bare path -- today's single-file shape, and what every
   // existing caller of runSuite still passes -- or a resolved skill descriptor from
@@ -109,7 +116,9 @@ export async function runSuite({
 
   const byId = new Map(registration.tasks.map((t) => [t.id, t]));
   const jobs = [];
-  for (const id of requested.taskIds) {
+  if (slots) {
+    for (const s of slots) jobs.push({ task: byId.get(s.task), cond: s.cond, rep: s.rep });
+  } else for (const id of requested.taskIds) {
     const task = byId.get(id);
     for (const cond of ["control", "treatment"]) {
       for (let rep = 1; rep <= requested.reps; rep++) jobs.push({ task, cond, rep });
@@ -198,7 +207,10 @@ export async function runSuite({
           v = verify(task.spec.verify, out);
         }
 
-        records.push({ task: task.id, cond, rep, pass: v.pass, failed: !!v.failed, why: v.why });
+        const record = { task: task.id, cond, rep, pass: v.pass, failed: !!v.failed, why: v.why };
+        if (stamp) record.stamp = stamp;
+        records.push(record);
+        onRecord(record);
         onProgress(++done, jobs.length, name, v.pass);
       } finally {
         if (promptScratch) rmSync(promptScratch, { recursive: true, force: true });
