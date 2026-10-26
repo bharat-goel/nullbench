@@ -10,10 +10,50 @@
 // English, and it cannot detect the model knowing the skill from its installed copy or
 // from training. It raises a question; it never answers one.
 
-import { readdirSync, readFileSync, existsSync } from "node:fs";
+import { readdirSync, readFileSync, existsSync, statSync } from "node:fs";
 import { join, resolve, relative, isAbsolute } from "node:path";
 
-const FORBIDDEN = ["CLAUDE.md", ".claude", "skills", "AGENTS.md"];
+// Exported so skill.mjs can refuse the same names at any depth inside skill_dir --
+// Claude Code itself loads a nested CLAUDE.md or .claude when working in a
+// subdirectory, so "top level only" isn't a safe boundary for a directory that gets
+// copied wholesale into the treatment sandbox.
+export const FORBIDDEN = ["CLAUDE.md", "CLAUDE.local.md", ".claude", "skills", "AGENTS.md"];
+
+// `skills` is checked unconditionally the same way every other FORBIDDEN name is,
+// EXCEPT that a top-level `skills` directory containing no file named SKILL.md at any
+// depth (case-insensitive) is allowed. Claude Code loads project skills from
+// `.claude/skills`, never from a top-level `skills/`, so a `skills/` tree with no
+// SKILL.md anywhere beneath it holds no skill -- it cannot be the channel the original
+// leak (FAILURES.md entry 5) was about. This matters for a real third-party eval fixture
+// whose byte-identical prompt names a path under `skills/<name>/...` that is just a
+// fixture file, not an installed skill. A `skills` entry that is not a directory at all
+// (a plain file, however unlikely) is refused unconditionally, same as before.
+function hasSkillMdBeneath(absDir) {
+  let entries;
+  try {
+    entries = readdirSync(absDir, { withFileTypes: true });
+  } catch {
+    // Unreadable: treat conservatively as "could hold a skill" rather than silently
+    // allowing it through.
+    return true;
+  }
+  for (const e of entries) {
+    const child = join(absDir, e.name);
+    // A symlink -- named SKILL.md, or a directory standing in for a real skill
+    // directory -- is not followed, but "not followed" must not mean "assumed
+    // harmless": resolving it could land on a SKILL.md just as easily as any other
+    // path component in this project (validateSkillDirPath, walkSkillDir) treats a
+    // symlink as a potential escape hatch rather than as nothing. Same conservative
+    // default as an unreadable directory below: assume it could hold a skill.
+    if (e.isSymbolicLink()) return true;
+    if (e.isFile()) {
+      if (e.name.toLowerCase() === "skill.md") return true;
+    } else if (e.isDirectory()) {
+      if (hasSkillMdBeneath(child)) return true;
+    }
+  }
+  return false;
+}
 
 export function assertIsolated(cwd, repoRoot) {
   const problems = [];
@@ -30,7 +70,14 @@ export function assertIsolated(cwd, repoRoot) {
     }
   }
   for (const name of FORBIDDEN) {
-    if (existsSync(join(abs, name))) problems.push(`sandbox contains ${name}, which the control arm must not see`);
+    const p = join(abs, name);
+    if (!existsSync(p)) continue;
+    if (name === "skills") {
+      let isDir = false;
+      try { isDir = statSync(p).isDirectory(); } catch { /* fall through to refusal below */ }
+      if (isDir && !hasSkillMdBeneath(p)) continue; // no SKILL.md anywhere beneath: not a skill, allowed
+    }
+    problems.push(`sandbox contains ${name}, which the control arm must not see`);
   }
   return { ok: problems.length === 0, problems };
 }
@@ -79,6 +126,27 @@ export function distinctiveTerms(skillText, limit = 12) {
 
   const singles = [...new Set(words.filter((w) => w.length >= 8 && !STOP.has(w)))];
   return [...phrases, ...singles].slice(0, limit);
+}
+
+// distinctiveTerms strips frontmatter ONLY off the very start of the string it's given.
+// For a single-file skill that's exactly right -- one document, one possible
+// frontmatter block. For a directory skill it isn't: concatenating every file's raw
+// text first (as combinedSkillText does, for pattern-drift's different purpose) means
+// only the FIRST file's frontmatter -- whichever sorts first -- ever gets stripped, and
+// any other file's own frontmatter leaks straight into the term list. Calling
+// distinctiveTerms per file and merging keeps every file's stripping independent, and
+// for a single-file skill (exactly one path in, from skill.mjs's skillFilePaths) it
+// reduces to exactly the pre-skill_dir call, term for term -- which is what the cobra
+// regression test pins. Takes a plain path list rather than a skill descriptor so this
+// module doesn't need to import skill.mjs (which already imports FORBIDDEN from here).
+export function distinctiveTermsForSkill(paths, limit = 12) {
+  const terms = new Set();
+  for (const p of paths) {
+    let text;
+    try { text = readFileSync(p, "utf8"); } catch { continue; } // unreadable or binary, skip
+    for (const t of distinctiveTerms(text, limit)) terms.add(t);
+  }
+  return [...terms];
 }
 
 export function scanControlLeakage({ rawDir, terms, threshold = 0.5 }) {

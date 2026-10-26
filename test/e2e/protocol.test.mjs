@@ -1,9 +1,9 @@
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, rmSync, mkdirSync, writeFileSync, readdirSync, readFileSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { main } from "../../src/cli.mjs";
-import { makeSuite, useStub, clearStub, capture, ledger, SIGNAL, SIGNAL2, HARM, JUDGE } from "./helpers.mjs";
+import { makeSuite, useStub, useSkillDir, clearStub, capture, ledger, SIGNAL, SIGNAL2, HARM, JUDGE } from "./helpers.mjs";
 
 afterEach(clearStub);
 
@@ -288,6 +288,159 @@ test("SKILL OVERRIDE: --skill swaps the thing under test and cannot be confirmat
   assert.equal(code, 0);
   assert.match(cap.text(), /EXPLORATORY/, "running a skill other than the registered one cannot be confirmed");
   assert.match(cap.text(), /skill differs/, "the report must say which skill actually ran");
+});
+
+// skill_dir end-to-end wiring, item by item against nullbench-skilldir-brief.md.
+
+// N4 (fix round 2): resolveSkill(dir, {override}) always returns kind:"file" for an
+// override -- correct, --skill is always a single file -- but classify.mjs used the
+// RESOLVED skill's kind to decide whether to say "registered skill_dir" or "registered
+// SKILL.md", so that branch could never fire for a skill_dir suite: with an override
+// present, registration.skill.kind is always "file" regardless of what was actually
+// registered. Tested through loadRegistration + classify's real inputs (a real
+// skill_dir suite, a real --skill run), not a hand-built registration object standing
+// in for one.
+test("SKILL OVERRIDE: on a skill_dir suite, the reason names skill_dir, not SKILL.md", async () => {
+  const dir = makeSuite({ tasks: ALL });
+  useSkillDir(dir, { "SKILL.md": "# demo skill\nAsk what a count leaves out." });
+  const other = join(dir, "other-skill.md");
+  writeFileSync(other, "# a different skill\nSomething else entirely.");
+  useStub(dir, { default: { outs: ["a plain reply"] } });
+
+  const cap = capture();
+  const code = await main([dir, "--yes", "--skill", other], cap);
+  assert.equal(code, 0);
+  assert.match(cap.text(), /EXPLORATORY/);
+  assert.match(cap.text(), /registered skill_dir/, "the reason must name skill_dir, since that's what was actually registered");
+  assert.doesNotMatch(cap.text(), /registered SKILL\.md/);
+});
+
+// Retitled and rewritten (fix round 2, "SKILLDIR 1"): this used to assert only exit 0
+// and CONFIRMATORY, which is true of ANY clean skill_dir run and proves nothing
+// specific about the system prompt actually reaching the CLI. The pure
+// renderSkillSystemPrompt unit test in test/runner.test.mjs covers the STRING it
+// builds; nothing end-to-end confirmed runner.mjs actually PASSES that file to the
+// real invocation. NULLBENCH_STUB_ECHO_SYSTEM_PROMPT closes that: the stub reads back
+// whatever --append-system-prompt-file pointed at and echoes it, landing in the raw
+// reply file main() writes to disk.
+test("SKILLDIR: the system prompt actually reaching the CLI starts with the Base directory line", async () => {
+  const dir = makeSuite({ tasks: ALL });
+  useSkillDir(dir, {
+    "SKILL.md": "# demo skill\nAsk what a count leaves out before treating it as evidence.",
+    "references/foo.md": "a reference file, loaded on demand, not injected wholesale",
+  });
+  useStub(dir, WORKING);
+  process.env.NULLBENCH_STUB_ECHO_SYSTEM_PROMPT = "1";
+  const cap = capture();
+  let code;
+  try {
+    code = await main([dir, "--yes"], cap);
+  } finally {
+    delete process.env.NULLBENCH_STUB_ECHO_SYSTEM_PROMPT;
+  }
+  assert.equal(code, 0);
+  assert.match(cap.text(), /CONFIRMATORY/, "a clean skill_dir run must still confirm");
+
+  const reportMatch = /Report: (.+report\.md)/.exec(cap.text());
+  assert.ok(reportMatch, "main() must announce the report path");
+  const rawDir = join(reportMatch[1], "..", "raw");
+  const treatmentReply = readFileSync(join(rawDir, "sig__treatment__1.txt"), "utf8");
+  const systemPrompt = /<system-prompt>([\s\S]*?)<\/system-prompt>/.exec(treatmentReply)?.[1] ?? "";
+  assert.match(systemPrompt, /^Base directory for this skill: /, "the file the CLI actually received must start with the Base directory line");
+  assert.match(systemPrompt, /demo skill/, "and it must carry SKILL.md's own text");
+
+  const controlReply = readFileSync(join(rawDir, "sig__control__1.txt"), "utf8");
+  const controlSystemPrompt = /<system-prompt>([\s\S]*?)<\/system-prompt>/.exec(controlReply)?.[1] ?? "";
+  assert.equal(controlSystemPrompt, "", "control must never receive a system prompt file at all");
+});
+
+test("SKILLDIR: PATTERN_IN_SKILL fires on a pattern found only in a reference file, not SKILL.md", async () => {
+  const dir = makeSuite({ tasks: ALL });
+  useSkillDir(dir, {
+    "SKILL.md": "# demo skill\nOrdinary guidance, nothing quotable here.",
+    // "denominator" is SIGNAL's verifier pattern (see helpers.mjs) -- it appears only
+    // in this reference file, never in SKILL.md itself.
+    "references/answer-key.md": "Always say denominator when a count lacks one.",
+  });
+  useStub(dir, { default: { outs: ["a plain reply"] } });
+
+  const cap = capture();
+  const code = await main([dir, "--dry-run"], cap);
+  assert.equal(code, 0);
+  // The match is in a reference file, not SKILL.md -- the message must say so rather
+  // than naming SKILL.md when the actual hit could be anywhere in skill_dir.
+  assert.match(cap.text(), /appears verbatim in skill_dir/, "a skill_dir suite's drift message must name skill_dir, not SKILL.md");
+  assert.doesNotMatch(cap.text(), /appears verbatim in SKILL\.md/);
+  assert.match(cap.text(), /denominator/, "the offending pattern must be named");
+  assert.match(cap.text(), /"sig"/, "the offending task must be named");
+});
+
+test("SKILLDIR: a symlink anywhere in skill_dir is a structural failure, exit 2, nothing spent", async () => {
+  const dir = makeSuite({ tasks: ALL });
+  writeFileSync(join(dir, "elsewhere.md"), "outside the skill directory");
+  useSkillDir(dir, { "SKILL.md": "# demo skill" });
+  symlinkSync(join(dir, "elsewhere.md"), join(dir, "skill", "linked.md"));
+  useStub(dir, { default: { outs: ["a plain reply"] } });
+
+  const cap = capture();
+  const code = await main([dir, "--dry-run"], cap);
+  assert.equal(code, 2, "a symlink in skill_dir must be structural, not drift");
+  assert.match(cap.text(), /symlink/);
+  assert.equal(existsSync(join(dir, "results")), false, "nothing must be spent");
+});
+
+test("SKILLDIR: a fixture carrying a top-level `skill` entry is a structural failure", async () => {
+  const FIXTURE_TASK = {
+    id: "fx", kind: "signal", predict: "helps", prompt: "a task needing a project",
+    fixture: "colliding-fixture", verify: { type: "any", patterns: ["x"] },
+  };
+  const dir = makeSuite({ tasks: [FIXTURE_TASK, HARM] });
+  useSkillDir(dir, { "SKILL.md": "# demo skill" });
+  mkdirSync(join(dir, "colliding-fixture", "skill"), { recursive: true });
+  writeFileSync(join(dir, "colliding-fixture", "README.md"), "a fixture project");
+  useStub(dir, { default: { outs: ["a plain reply"] } });
+
+  const cap = capture();
+  const code = await main([dir, "--dry-run"], cap);
+  assert.equal(code, 2, "a fixture colliding with the injected skill/ must be structural");
+  assert.match(cap.text(), /"fx"/);
+  assert.match(cap.text(), /skill/);
+  assert.equal(existsSync(join(dir, "results")), false);
+});
+
+test("SKILLDIR: a nested CLAUDE.md inside skill_dir is a structural failure, not just a top-level one", async () => {
+  const dir = makeSuite({ tasks: ALL });
+  useSkillDir(dir, {
+    "SKILL.md": "# demo skill",
+    "references/foo.md": "ordinary reference content",
+  });
+  mkdirSync(join(dir, "skill", "nested"), { recursive: true });
+  writeFileSync(join(dir, "skill", "nested", "CLAUDE.md"), "# a nested project doc");
+  useStub(dir, { default: { outs: ["a plain reply"] } });
+
+  const cap = capture();
+  const code = await main([dir, "--dry-run"], cap);
+  assert.equal(code, 2, "a nested CLAUDE.md inside skill_dir must be structural");
+  assert.match(cap.text(), /CLAUDE\.md/);
+  assert.equal(existsSync(join(dir, "results")), false);
+});
+
+test("a fixture with a top-level 'skill' entry is fine for a suite with no skill_dir at all", async () => {
+  // The collision check exists because treatment copies skill_dir to <sandbox>/skill/ --
+  // a suite with no skill_dir (the single-file SKILL.md default) never does that, so a
+  // fixture's own "skill" directory or file cannot collide with anything.
+  const FIXTURE_TASK = {
+    id: "fx", kind: "signal", predict: "helps", prompt: "a task needing a project",
+    fixture: "ok-fixture", verify: { type: "any", patterns: ["reply"] },
+  };
+  const dir = makeSuite({ tasks: [FIXTURE_TASK, HARM] });
+  mkdirSync(join(dir, "ok-fixture", "skill"), { recursive: true });
+  writeFileSync(join(dir, "ok-fixture", "README.md"), "a fixture project");
+  useStub(dir, { default: { outs: ["a plain reply"] } });
+
+  const cap = capture();
+  const code = await main([dir, "--dry-run"], cap);
+  assert.equal(code, 0, "no skill_dir means no collision is possible");
 });
 
 test("PREFLIGHT: a task declaring a fixture that does not exist fails the dry run, before any spend", async () => {

@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync, readFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { runSuite, gradedCounts } from "../src/runner.mjs";
+import { runSuite, gradedCounts, renderSkillSystemPrompt } from "../src/runner.mjs";
 
 const STUB = fileURLToPath(new URL("../tools/stub-claude.mjs", import.meta.url));
 
@@ -278,6 +278,163 @@ test("a rejecting runSuite call does not leak the shared sandbox on disk", async
     assert.equal(after, before, "the shared sandbox mkdtemp'd at the top of runSuite must be cleaned up even when a worker rejects");
     clean(dir);
     rmSync(fixtureRoot, { recursive: true, force: true });
+  } finally {
+    if (prevTmpdir === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = prevTmpdir;
+    rmSync(isolatedTmp, { recursive: true, force: true });
+  }
+});
+
+// renderSkillSystemPrompt is a pure function specifically so this requirement is a plain
+// unit test -- the actual file it builds lives inside a per-run sandbox that is rmSync'd
+// before a test could ever inspect it.
+test("renderSkillSystemPrompt starts with the Base directory line, then a blank line, then SKILL.md text", () => {
+  const out = renderSkillSystemPrompt({ skillRoot: "/tmp/sandbox-abc/skill", mdText: "# demo\nbody text" });
+  const lines = out.split("\n");
+  assert.equal(lines[0], "Base directory for this skill: /tmp/sandbox-abc/skill");
+  assert.equal(lines[1], "");
+  assert.match(out, /# demo\nbody text$/);
+});
+
+test("skill_dir treatment: the sandbox gets skill/ with every file; control gets none of it", async () => {
+  const dir = env({ default: { outs: ["a reply"] } });
+  mkdirSync(join(dir, "skill"));
+  writeFileSync(join(dir, "skill", "SKILL.md"), "# demo skill");
+  mkdirSync(join(dir, "skill", "references"));
+  writeFileSync(join(dir, "skill", "references", "foo.md"), "reference content");
+
+  const raw = join(dir, "raw");
+  process.env.NULLBENCH_STUB_ECHO_CWD = "1";
+  // ECHO_CWD alone only lists the SANDBOX's top level ("skill" appears as one entry) --
+  // that would pass even if the copy silently dropped everything below skill/'s top
+  // level. ECHO_SKILL_FILES has the stub walk skill/ itself and report every file it
+  // actually finds there, so "every file was copied" is a claim this test can check,
+  // not just "a directory named skill exists".
+  process.env.NULLBENCH_STUB_ECHO_SKILL_FILES = "1";
+  let records;
+  try {
+    ({ records } = await runSuite({
+      registration, requested,
+      skillFile: { kind: "dir", root: join(dir, "skill"), mdFile: join(dir, "skill", "SKILL.md") },
+      rawDir: raw, concurrency: 1,
+    }));
+  } finally {
+    delete process.env.NULLBENCH_STUB_ECHO_CWD;
+    delete process.env.NULLBENCH_STUB_ECHO_SKILL_FILES;
+  }
+  assert.equal(records.length, 8);
+  const treatmentFiles = readdirSync(raw).filter((f) => f.includes("__treatment__"));
+  const controlFiles = readdirSync(raw).filter((f) => f.includes("__control__"));
+  for (const f of treatmentFiles) {
+    const text = readFileSync(join(raw, f), "utf8");
+    assert.match(text, /<cwd-files>.*skill.*<\/cwd-files>/, `${f}: treatment sandbox must contain skill/`);
+    assert.match(text, /<skill-files>SKILL\.md,references\/foo\.md<\/skill-files>/,
+      `${f}: every file under skill_dir must actually be copied, not just the top-level directory`);
+  }
+  for (const f of controlFiles) {
+    const text = readFileSync(join(raw, f), "utf8");
+    assert.doesNotMatch(text, /<cwd-files>.*skill.*<\/cwd-files>/, `${f}: control sandbox must not see any skill file`);
+    assert.match(text, /<skill-files><\/skill-files>/, `${f}: control sandbox must have no skill/ directory to walk at all`);
+  }
+  clean(dir);
+});
+
+test("the judge never runs in the subject's sandbox, in either arm", async () => {
+  // A judged task in a skill_dir suite: the subject's treatment sandbox holds skill/ and
+  // the system prompt file. If the judge call reused that sandbox (the CRITICAL bug this
+  // pins), an unrestricted judge invocation could read skill/references/* straight off
+  // disk -- the exact channel FAILURES.md entry 1 exists to close, reopened one level up.
+  const dir = env({
+    rules: [{ promptIncludes: "RUBRIC", arm: "any", outs: ["VERDICT: PASS\nREASON: fine"] }],
+    default: { outs: ["a reply"] },
+  });
+  mkdirSync(join(dir, "skill"));
+  writeFileSync(join(dir, "skill", "SKILL.md"), "# demo skill");
+  const judged = {
+    ...registration,
+    tasks: [{
+      id: "jg", kind: "signal", predict: "helps",
+      spec: { id: "jg", prompt: "judge me", verify: { type: "judge", rubric: "RUBRIC" } },
+    }],
+  };
+  const raw = join(dir, "raw");
+  process.env.NULLBENCH_STUB_ECHO_CWD = "1";
+  let records;
+  try {
+    ({ records } = await runSuite({
+      registration: judged, requested: { ...requested, taskIds: ["jg"] },
+      skillFile: { kind: "dir", root: join(dir, "skill"), mdFile: join(dir, "skill", "SKILL.md") },
+      rawDir: raw, concurrency: 1,
+    }));
+  } finally {
+    delete process.env.NULLBENCH_STUB_ECHO_CWD;
+  }
+  assert.ok(records.every((r) => r.pass));
+  const judgeFiles = readdirSync(raw).filter((f) => f.includes("__judge"));
+  assert.ok(judgeFiles.length === 8, "one captured judge call per run, both arms");
+  for (const f of judgeFiles) {
+    const text = readFileSync(join(raw, f), "utf8");
+    assert.doesNotMatch(text, /<cwd-files>[^<]*skill/,
+      `${f}: the judge's own sandbox must not contain skill/ or the prompt file`);
+  }
+  clean(dir);
+});
+
+// N3 (fix round 2): the subject sandbox (and, in treatment, the prompt scratch dir) was
+// only removed in the worker's OUTER `finally` -- after the judge had already run. The
+// judge itself is unrestricted and the treatment prompt names the sandbox's absolute
+// path, so a reply that quotes it could still reach the subject's directory by absolute
+// path while it was judged. Fixed: remove both BEFORE calling runJudge, keeping the
+// outer `finally` only as a backstop for the non-judge path (and for a judge call that
+// throws before this point).
+//
+// Tested from OUTSIDE the process under test, since the judge runs in its own
+// directory with no other way to see what happened to the subject's: concurrency 1
+// means at most one subject sandbox is in flight system-wide at any moment, so the
+// judge's own stub invocation reporting an EMPTY <tmp-sandboxes> list proves this job's
+// subject sandbox was already gone by the time it ran, not merely eventually cleaned up.
+test("the subject sandbox is removed BEFORE the judge is invoked, not just eventually", async () => {
+  // A private, empty TMPDIR for the scan's duration -- os.tmpdir() re-reads
+  // process.env.TMPDIR on every call on POSIX, and the real one can carry unrelated
+  // leftovers (this project's own killed-process debris, other tools' temp dirs) that
+  // would make the <tmp-sandboxes> scan non-empty for reasons that have nothing to do
+  // with this test. Same pattern as the existing "does not leak the shared sandbox"
+  // test below.
+  const isolatedTmp = mkdtempSync(join(tmpdir(), "nb-isolated-tmpdir-"));
+  const prevTmpdir = process.env.TMPDIR;
+  process.env.TMPDIR = isolatedTmp;
+  try {
+    const dir = env({
+      rules: [{ promptIncludes: "RUBRIC", arm: "any", outs: ["VERDICT: PASS\nREASON: fine"] }],
+      default: { outs: ["a reply"] },
+    });
+    const judged = {
+      ...registration,
+      tasks: [{
+        id: "jg", kind: "signal", predict: "helps",
+        spec: { id: "jg", prompt: "judge me", verify: { type: "judge", rubric: "RUBRIC" } },
+      }],
+    };
+    const raw = join(dir, "raw");
+    process.env.NULLBENCH_STUB_ECHO_TMPDIR_SANDBOXES = "1";
+    let records;
+    try {
+      ({ records } = await runSuite({
+        registration: judged, requested: { ...requested, taskIds: ["jg"] },
+        skillFile: join(dir, "SKILL.md"), rawDir: raw, concurrency: 1,
+      }));
+    } finally {
+      delete process.env.NULLBENCH_STUB_ECHO_TMPDIR_SANDBOXES;
+    }
+    assert.ok(records.every((r) => r.pass));
+    const judgeFiles = readdirSync(raw).filter((f) => f.includes("__judge"));
+    assert.equal(judgeFiles.length, 8);
+    for (const f of judgeFiles) {
+      const text = readFileSync(join(raw, f), "utf8");
+      assert.match(text, /<tmp-sandboxes><\/tmp-sandboxes>/,
+        `${f}: a subject sandbox was still on disk when the judge ran for this job`);
+    }
+    clean(dir);
   } finally {
     if (prevTmpdir === undefined) delete process.env.TMPDIR;
     else process.env.TMPDIR = prevTmpdir;

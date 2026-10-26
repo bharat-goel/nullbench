@@ -5,7 +5,7 @@
 // outside the repository with --setting-sources project, so neither arm can see the
 // installed skills, the repository, or its CLAUDE.md.
 
-import { mkdtempSync, mkdirSync, writeFileSync, cpSync, rmSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, cpSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { invoke } from "./claude.mjs";
@@ -62,6 +62,17 @@ function makeCwd(task, fixtureRoot, repoRoot) {
   return dir;
 }
 
+// Mirrors what Claude Code itself prints when a skill loads: a "Base directory" line
+// naming where its reference files actually live THIS run (the sandbox, not the
+// skill_dir's original location -- a script inside the skill would resolve relative
+// paths against the former), a blank line, then SKILL.md's own text unchanged. Pure and
+// exported so the "starts with the Base directory line" requirement is a plain unit
+// test rather than something recovered from a sandbox that gets rmSync'd before any
+// test could look at it.
+export function renderSkillSystemPrompt({ skillRoot, mdText }) {
+  return `Base directory for this skill: ${skillRoot}\n\n${mdText}`;
+}
+
 export function gradedCounts(records) {
   const out = {};
   for (const r of records) {
@@ -82,6 +93,12 @@ export async function runSuite({
   // killed mid-batch still leaves every graded run on disk.
   slots = null, stamp = null, onRecord = () => {},
 }) {
+  // skillFile is either a bare path -- today's single-file shape, and what every
+  // existing caller of runSuite still passes -- or a resolved skill descriptor from
+  // prereg.mjs's resolveSkill ({kind: "file"|"dir", mdFile, root?, files?}). Normalizing
+  // once here means the worker below never has to care which one it got, and no
+  // existing call site had to change.
+  const skill = typeof skillFile === "string" ? { kind: "file", mdFile: skillFile } : skillFile;
   // A preflight probe, and nothing else. No run executes here any more -- every
   // invocation gets its own sandbox from makeCwd. What this still buys is failing
   // before a single CLI call is paid for when the temp directory itself is unusable:
@@ -117,11 +134,35 @@ export async function runSuite({
       // Throws before the sandbox exists (missing fixture) or after cleaning it up
       // itself (failed isolation check) -- either way there is nothing to unwind here.
       const cwd = makeCwd(task, fixtureRoot, repoRoot);
+      // The system prompt file for a directory skill lives OUTSIDE every sandbox --
+      // subject's and judge's alike. It used to sit inside cwd, which meant the judge
+      // (invoked in the same cwd, see below) could read it straight off disk. A
+      // separate scratch directory, mkdtemp'd here and removed in this same `finally`,
+      // closes that regardless of what the judge sandbox itself does.
+      let promptScratch = null;
       let v;
       try {
+        // Treatment differs from control in exactly one respect (PROTOCOL.md §7):
+        // control never sees any of this. A single-file skill's system prompt file is
+        // just its own path, unchanged from before skill_dir existed. A directory skill
+        // additionally gets copied into <sandbox>/skill/ -- so a skill whose method
+        // reads its own reference files on demand can actually find them.
+        let systemPromptFile = null;
+        if (cond === "treatment") {
+          if (skill.kind === "dir") {
+            const skillRoot = join(cwd, "skill");
+            cpSync(skill.root, skillRoot, { recursive: true });
+            const mdText = readFileSync(skill.mdFile, "utf8");
+            promptScratch = mkdtempSync(join(tmpdir(), "nullbench-sp-"));
+            systemPromptFile = join(promptScratch, "system-prompt.md");
+            writeFileSync(systemPromptFile, renderSkillSystemPrompt({ skillRoot, mdText }));
+          } else {
+            systemPromptFile = skill.mdFile;
+          }
+        }
         const { out, err, code } = await invoke({
           prompt: task.spec.prompt,
-          systemPromptFile: cond === "treatment" ? skillFile : null,
+          systemPromptFile,
           cwd, model: requested.model,
         });
 
@@ -133,11 +174,35 @@ export async function runSuite({
           // batch print a tidy -13.3pp. FAILURES.md entry 8.
           v = { pass: false, failed: true, why: `run failed (exit ${code}): ${(out || err).slice(0, 80)}` };
         } else if (task.spec.verify.type === "judge") {
-          // The judge runs in this run's own sandbox, which is destroyed below. It is
-          // the one invocation here with no tool restrictions (see the report note),
-          // so giving it a directory nothing else will ever see is what keeps an
-          // unrestricted judge from being a cross-run channel.
-          v = await runJudge({ task: task.spec, reply: out, model: requested.judgeModel, cwd });
+          // The judge only needs `out` (the reply text) from here on -- the subject's
+          // sandbox and the prompt scratch dir are removed BEFORE runJudge is called,
+          // not merely in the outer `finally` afterward. The judge is unrestricted and
+          // the treatment prompt names the sandbox's own absolute path; a reply that
+          // quoted it could otherwise still reach the subject's directory by absolute
+          // path while the judge held no restrictions of its own. The outer `finally`
+          // below still calls rmSync on both -- a no-op here since they're already
+          // gone, and the only backstop that matters for the non-judge branches above.
+          if (promptScratch) { rmSync(promptScratch, { recursive: true, force: true }); promptScratch = null; }
+          rmSync(cwd, { recursive: true, force: true });
+
+          // The judge must NEVER share the subject's sandbox: in treatment that sandbox
+          // held skill/ (and, until just above, the prompt scratch dir), and an
+          // unrestricted judge invocation could read straight off disk -- exactly the
+          // channel FAILURES.md entry 1 exists to close, reopened one level up if the
+          // judge ran here instead. A fresh, isolation-checked sandbox per judge call,
+          // destroyed immediately after, closes it regardless of what cwd used to hold.
+          const judgeCwd = mkdtempSync(join(tmpdir(), "nullbench-judge-"));
+          const judgeIso = assertIsolated(judgeCwd, repoRoot);
+          if (!judgeIso.ok) {
+            rmSync(judgeCwd, { recursive: true, force: true });
+            throw new Error(`judge sandbox is not isolated:\n  - ${judgeIso.problems.join("\n  - ")}`);
+          }
+          try {
+            v = await runJudge({ task: task.spec, reply: out, model: requested.judgeModel, cwd: judgeCwd });
+          } finally {
+            if (rawDir) writeFileSync(join(rawDir, `${name}__judge.txt`), v?.raw ?? "");
+            rmSync(judgeCwd, { recursive: true, force: true });
+          }
         } else {
           v = verify(task.spec.verify, out);
         }
@@ -148,6 +213,7 @@ export async function runSuite({
         onRecord(record);
         onProgress(++done, jobs.length, name, v.pass);
       } finally {
+        if (promptScratch) rmSync(promptScratch, { recursive: true, force: true });
         rmSync(cwd, { recursive: true, force: true });
       }
     }

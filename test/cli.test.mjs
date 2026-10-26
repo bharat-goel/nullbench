@@ -183,3 +183,58 @@ test("--resume takes a value and a bare --resume is refused, not ignored", () =>
   assert.equal(parseArgs(["bench"]).resume, null);
   assert.throws(() => parseArgs(["bench", "--resume"]), /--resume requires a value/);
 });
+
+// A declared fixture that assertIsolated would refuse at run time (cli.mjs ~150-160
+// only checked existence and a top-level "skill" collision) used to pass --dry-run
+// clean, get its judge canaries paid for, then abort the whole batch the moment
+// runner.mjs's makeCwd copied that fixture in and called assertIsolated on it
+// (skill-audit Task 5's otel-go review, finding C-1). The preflight must run the same
+// isolation check against each declared fixture's own contents -- as they would land
+// in a sandbox -- and fail structurally (exit 2) before any canary or subject call.
+function setUpFixtureSuite({ leak } = {}) {
+  const dir = mkdtempSync(join(tmpdir(), "nb-cli-fx-"));
+  writeFileSync(join(dir, "SKILL.md"), "# demo skill\n");
+  const fxDir = join(dir, "a-fixture");
+  mkdirSync(fxDir, { recursive: true });
+  writeFileSync(join(fxDir, "README.md"), "a fixture project");
+  if (leak) {
+    mkdirSync(join(fxDir, "skills", "x"), { recursive: true });
+    writeFileSync(join(fxDir, "skills", "x", "SKILL.md"), "# a real skill, leaked into the fixture");
+  }
+  const taskSpec = {
+    id: "fx", prompt: "the smoke test question", fixture: "a-fixture",
+    verify: { type: "any", patterns: ["denominator"] },
+  };
+  const taskPath = join(dir, "fx.json");
+  writeFileSync(taskPath, JSON.stringify(taskSpec));
+  const sha256 = createHash("sha256").update(readFileSync(taskPath)).digest("hex");
+  writeFileSync(join(dir, "nullbench.json"), JSON.stringify({
+    model: "sonnet", judge_model: "sonnet", reps: 4,
+    tasks: [{ id: "fx", file: "fx.json", sha256, kind: "signal", predict: "helps" }],
+  }));
+  return dir;
+}
+
+test("--dry-run refuses a declared fixture whose contents fail isolation, before any spend", () => {
+  const dir = setUpFixtureSuite({ leak: true });
+  try {
+    const result = spawnSync(process.execPath, [BIN, dir, "--dry-run"], { encoding: "utf8" });
+    assert.equal(result.status, 2, `expected exit code 2, got ${result.status}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+    assert.match(result.stdout, /a-fixture/, "the message must name the offending fixture");
+    assert.match(result.stdout, /skills/, "the message must name what the fixture contains that fails isolation");
+    assert.doesNotMatch(result.stdout, /TOTAL/, "a structural failure must not print the cost preflight");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("--dry-run accepts a declared fixture with no isolation problems", () => {
+  const dir = setUpFixtureSuite({ leak: false });
+  try {
+    const result = spawnSync(process.execPath, [BIN, dir, "--dry-run"], { encoding: "utf8" });
+    assert.equal(result.status, 0, `expected exit code 0, got ${result.status}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+    assert.match(result.stdout, /TOTAL/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

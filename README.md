@@ -59,12 +59,17 @@ node bin/nullbench.mjs ./my-suite --resume 2026-09-24T18:02:11Z
 ```
 
 Only the runs that produced no answer are re-attempted; every graded run, pass or fail, is
-carried forward unchanged. The resume is refused if a task file, `SKILL.md` or
+carried forward unchanged. The resume is refused if a task file, the skill (any file in it) or
 `nullbench.json` changed, or if the model, judge model or reps differ. The canaries are
 re-run in full, the ledger gets a separate entry linked to the original, and the report
 names every run that contributed records. `records.json` is checkpointed after every
 record, so a killed process loses nothing it had already graded. Rules:
 [`PROTOCOL.md` §10](PROTOCOL.md#10-resuming-an-interrupted-batch).
+
+A skill that's more than one file — `SKILL.md` plus reference material it loads on
+demand — registers `"skill_dir": "<relative dir>"` instead of relying on the bare
+`SKILL.md` fallback; the whole directory is copied into the treatment arm's sandbox and
+covered by the registration hash, not just `SKILL.md` itself. See PROTOCOL.md §1.4.
 
 A worked example is in [`examples/cobra/`](examples/cobra/). Full field reference,
 canonicalization, hash construction and the interval methods: [`PROTOCOL.md`](PROTOCOL.md).

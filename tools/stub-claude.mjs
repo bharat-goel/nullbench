@@ -29,6 +29,25 @@
 // (the nullbench process) before replying -- a laptop lid, an OOM kill, a closed
 // terminal. Nothing in the parent's `finally` runs. Only meaningful when nullbench is
 // spawned as its own process; in-process tests must not set it.
+//
+// NULLBENCH_STUB_ECHO_SYSTEM_PROMPT: when set, and the invocation carries
+// --append-system-prompt-file <path>, the stub reads that file and appends:
+//   <system-prompt>...its full text...</system-prompt>
+// This is what lets a test confirm the Base-directory line actually reaches the CLI --
+// runner.mjs builds that file and passes its path on the real invocation; without this,
+// nothing outside runner.mjs's own process ever saw its contents, so the only thing a
+// test could check was the pure renderSkillSystemPrompt string builder in isolation.
+//
+// NULLBENCH_STUB_ECHO_TMPDIR_SANDBOXES: when set, the stub lists every entry under
+// os.tmpdir() whose name starts with "nullbench-run-" or "nullbench-fx-" (a SUBJECT
+// sandbox, fixture-backed or not) and appends:
+//   <tmp-sandboxes>a,b,c</tmp-sandboxes>
+// This is what makes "the subject sandbox is gone before the judge is invoked, not just
+// eventually" a fact a test can check from OUTSIDE the process under test: the judge is
+// a separate stub invocation, in its own directory, with no other way to see what
+// happened to the subject's. Run this at concurrency 1 and there is at most one subject
+// sandbox in flight system-wide, so an empty list at the moment the JUDGE's own
+// invocation runs proves this job's subject sandbox was already removed.
 
 import {
   readFileSync,
@@ -39,8 +58,36 @@ import {
   closeSync,
   unlinkSync,
   readdirSync,
+  statSync,
 } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+// NULLBENCH_STUB_ECHO_SKILL_FILES: when set, the stub recursively walks its own
+// process.cwd()/skill (if that directory exists at all) and appends a third line:
+//   <skill-files>SKILL.md,references/foo.md</skill-files>
+// sorted, POSIX-joined, relative to skill/. ECHO_CWD alone only shows "skill" as ONE
+// top-level entry -- that would look identical whether the copy brought every file
+// along or silently dropped everything below the top level. This walks the actual
+// contents so a test can assert on what got copied, not just that a directory exists.
+// No skill/ at all (the control arm, or a single-file skill) reports an empty list, not
+// an absent line, so a test never has to special-case "line missing" vs "walked empty".
+function walkSkillDirForEcho(dir, rel = "") {
+  const abs = join(dir, rel);
+  let out = [];
+  for (const name of readdirSync(abs).sort()) {
+    const childRel = rel ? `${rel}/${name}` : name;
+    let isDir = false;
+    try {
+      isDir = statSync(join(abs, name)).isDirectory();
+    } catch {
+      continue;
+    }
+    if (isDir) out = out.concat(walkSkillDirForEcho(dir, childRel));
+    else out.push(childRel);
+  }
+  return out;
+}
 
 const plan = JSON.parse(readFileSync(process.env.NULLBENCH_STUB_PLAN, "utf8"));
 const statePath = process.env.NULLBENCH_STUB_STATE;
@@ -144,9 +191,26 @@ let output = outs[i % outs.length];
 if (process.env.NULLBENCH_STUB_ECHO_CWD) {
   output += `\n<cwd-files>${readdirSync(process.cwd()).sort().join(",")}</cwd-files>`;
 }
+if (process.env.NULLBENCH_STUB_ECHO_SKILL_FILES) {
+  const skillDir = join(process.cwd(), "skill");
+  const files = existsSync(skillDir) ? walkSkillDirForEcho(skillDir).sort() : [];
+  output += `\n<skill-files>${files.join(",")}</skill-files>`;
+}
 // After the listing, deliberately -- see the header note.
 if (process.env.NULLBENCH_STUB_WRITE_CWD_FILE) {
   writeFileSync(join(process.cwd(), process.env.NULLBENCH_STUB_WRITE_CWD_FILE), "written by a stub run\n");
+}
+if (process.env.NULLBENCH_STUB_ECHO_SYSTEM_PROMPT) {
+  const flagIdx = argv.indexOf("--append-system-prompt-file");
+  const promptFile = flagIdx !== -1 ? argv[flagIdx + 1] : null;
+  const text = promptFile && existsSync(promptFile) ? readFileSync(promptFile, "utf8") : "";
+  output += `\n<system-prompt>${text}</system-prompt>`;
+}
+if (process.env.NULLBENCH_STUB_ECHO_TMPDIR_SANDBOXES) {
+  const sandboxes = readdirSync(tmpdir())
+    .filter((f) => f.startsWith("nullbench-run-") || f.startsWith("nullbench-fx-"))
+    .sort();
+  output += `\n<tmp-sandboxes>${sandboxes.join(",")}</tmp-sandboxes>`;
 }
 process.stdout.write(output);
 process.exit(rule.code ?? 0);

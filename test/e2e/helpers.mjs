@@ -1,6 +1,6 @@
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
@@ -32,6 +32,31 @@ export function makeSuite({ tasks, reps = 4, omitHarm = false, corrupt = null })
   writeFileSync(join(dir, "nullbench.json"),
     JSON.stringify({ model: "sonnet", judge_model: "sonnet", reps, tasks: entries }, null, 2));
   return dir;
+}
+
+// Converts a suite already built by makeSuite (a single top-level SKILL.md) into a
+// skill_dir suite: sets nullbench.json's skill_dir, removes the old top-level SKILL.md,
+// and writes `files` (relative-path -> content) under <dir>/<skillDirName>/. Symlink
+// entries in `symlinks` (relative-path -> relative target inside the same skill dir)
+// let the structural-failure test create one without hand-rolling the fs calls itself.
+export function useSkillDir(dir, files, { skillDirName = "skill", symlinks = {} } = {}) {
+  const regPath = join(dir, "nullbench.json");
+  const raw = JSON.parse(readFileSync(regPath, "utf8"));
+  raw.skill_dir = skillDirName;
+  writeFileSync(regPath, JSON.stringify(raw));
+  rmSync(join(dir, "SKILL.md"), { force: true });
+  const root = join(dir, skillDirName);
+  mkdirSync(root, { recursive: true });
+  for (const [rel, content] of Object.entries(files)) {
+    const abs = join(root, rel);
+    mkdirSync(dirname(abs), { recursive: true });
+    writeFileSync(abs, content);
+  }
+  for (const [rel, target] of Object.entries(symlinks)) {
+    const abs = join(root, rel);
+    mkdirSync(dirname(abs), { recursive: true });
+    symlinkSync(join(root, target), abs);
+  }
 }
 
 export function useStub(dir, plan) {

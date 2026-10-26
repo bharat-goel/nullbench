@@ -112,6 +112,7 @@ A `nullbench.json` committed to the repository **before** the run.
 | `tasks[].sha256` | 64 hex characters | the declared hash of that file's bytes |
 | `tasks[].kind` | `signal` \| `harm` | what the task is for |
 | `tasks[].predict` | `helps` \| `no-effect` \| `harms` | mandatory, recorded whether or not it is borne out |
+| `skill_dir` | optional, non-empty string | relative to the registration's directory; when present, the skill under test is that whole directory rather than a single `SKILL.md` (§1.4) |
 
 JSON rather than TOML because Node ships no TOML parser — TOML would cost this project
 its only runtime dependency — and, more importantly, because the hash in §3 requires a
@@ -180,6 +181,106 @@ malformed file costs nothing. They are *run* only after confirmation. A judge-gr
 suite with no `canaries.json` is not a structural failure: it is the explicitly un-gated
 state, reported as such and unable to be confirmed.
 
+### 1.4 `skill_dir`
+
+A real Claude Code skill is often more than one file: `SKILL.md` plus a `references/` or
+`guidelines/` directory the skill instructs the model to read on demand. Measuring only
+`SKILL.md` when the content actually being graded lives in those other files understates
+or misstates what the skill does. `skill_dir` names that whole directory instead of a
+single file.
+
+When `skill_dir` is present, the path is relative to the registration's directory, and
+`<skill_dir>/SKILL.md` must exist. The path itself is checked before anything else, each
+condition its own structural failure:
+
+- must not be absolute;
+- must not contain a `..` segment;
+- must not be `"."` (or empty) — it names a subdirectory, not the registration directory
+  itself;
+- must resolve to a strict subdirectory of the registration directory (catches spellings
+  like `"sub/.."` that the checks above don't, and anything else that would put the
+  resolved path at or outside the registration directory);
+- must not contain, anywhere inside it, `nullbench.json`, `canaries.json`, `results/`
+  (this suite's own run-output directory — every earlier run's raw subject and judge
+  replies), `LEDGER.md` (every earlier run's summary, predictions included), or any
+  registered task's file — each of those holds content (a verifier's patterns, a
+  canary's known-PASS replies, a prior judge verdict, a prior run's exact pass/fail
+  pattern) that PATTERN_IN_SKILL and the leakage scan exist to keep out of the
+  treatment sandbox, and copying `skill_dir` wholesale would hand it over regardless of
+  what those checks catch afterward;
+- must not be inside, equal to, or contain any declared fixture directory, checked in
+  **both** directions. A fixture is copied into every arm's sandbox, control included
+  (§7) — a `skill_dir` reachable through one would put `SKILL.md` and every reference
+  file into the control arm too, not only treatment's. That is control-arm
+  contamination (§7, FAILURES.md entry 5) reached through the fixture path instead of
+  the repository root, and a suite with no pattern-verified task gives PATTERN_IN_SKILL
+  nothing to catch it with. All comparisons above are by real path (`realpathSync`),
+  resolving symlinks and on-disk casing rather than the resolved-string alone, so a
+  case-insensitive filesystem's own alias of a protected path or fixture — or an
+  intermediate symlink standing in for one of `skill_dir`'s own path components — can't
+  pass as a clean, unrelated directory.
+
+**Only the treatment arm ever sees it.** The whole
+directory is copied fresh into that run's own sandbox at `<sandbox>/skill/` — the name is
+singular, and deliberately not one of `assertIsolated`'s forbidden names (§7). The system
+prompt gets exactly one line prepended to `SKILL.md`'s own text, mirroring what Claude
+Code itself prints when a skill loads:
+
+```
+Base directory for this skill: <absolute path of <sandbox>/skill>
+
+<SKILL.md's own text>
+```
+
+Only `SKILL.md`'s text is injected into the prompt. Every other file in `skill_dir` is
+present on disk for the model to read on demand, exactly as a real skill installation
+works, and exactly as never happens in the control arm, whose sandbox contains none of
+it. A fixture that itself carries a top-level `skill` entry collides with this copy and
+is refused as a structural failure (§1.2), the same posture as `assertIsolated`'s check
+but a separate one — that check also runs against the treatment sandbox this project
+itself builds, and `skill/` belongs there.
+
+A symlink anywhere in `skill_dir` — including the root itself — is refused as a
+structural failure rather than followed or ignored: it can point outside the directory
+entirely, which would make both the sandbox copy and the manifest hash below name
+something other than what a reader of `skill_dir` actually sees. (A symlinked root is
+not a theoretical case: `cpSync` copies it AS a symlink, so `<sandbox>/skill` would point
+straight back at the original location outside the sandbox.) The same posture applies to
+anything in the tree that is neither a file nor a directory — a FIFO, socket, or device
+node — refused by `lstat` classification alone, before anything ever tries to open and
+read it. And `CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md`, `.claude` or `skills` anywhere
+inside `skill_dir`, at any depth, and compared **case-insensitively** — `claude.md` and
+`Claude.MD` are refused exactly like `CLAUDE.md` itself, since a plain string match
+against whatever casing a directory entry happens to have on disk is not the same
+guarantee a case-insensitive filesystem's own lookups give elsewhere — are refused the
+same way `assertIsolated` refuses them at a sandbox's top level (§7) — Claude Code
+itself loads a nested `CLAUDE.md` or `.claude` when working in a subdirectory, so "top
+level only" is not a safe boundary for a directory copied in
+wholesale. Unlike `assertIsolated`'s sandbox/fixture check (§7), `skills` here has no
+SKILL.md exception: this is the skill under test being copied into the treatment
+sandbox as `skill/`, not a fixture that happens to have an unrelated `skills/` path in
+it, so a nested `skills` entry is refused unconditionally regardless of what it holds.
+
+Once `skill_dir`'s root has been confirmed to exist, any further problem reading it — a
+walk error, or a single unreadable file among otherwise-good ones — is also a structural
+failure rather than a silent `null` hash. A registration whose H doesn't move when a file
+becomes unreadable would look exactly as confirmable as one where nothing changed; only
+the root being entirely absent still resolves to `null`, on the same footing as a missing
+single-file `SKILL.md`, because that is the CLI's own existence check to report.
+
+Absent `skill_dir`, behaviour is byte-identical to a suite that has never heard of it: a
+single `SKILL.md` beside the registration, injected exactly as before.
+
+**Known gap, disclosed rather than fixed here:** `H` is computed once, at load, from
+whatever is on disk at that moment — but the skill (single file or directory) is
+re-read from the live path on every run, not snapshotted once at preflight. Nothing
+stops the files changing between preflight and the last run in the batch, which would
+mean different runs in the same batch saw different bytes under one `H`. This is
+pre-existing behaviour for a single `SKILL.md` (skill_dir does not make it worse, only
+gives it more surface area) and is not fixed by this feature; closing it would mean
+copying a snapshot once at preflight and running every arm/rep against that copy
+instead of the live path.
+
 ---
 
 ## 2. Canonicalization
@@ -211,8 +312,40 @@ H = sha256(canonical({
 
 with `tasks` sorted by `id`, and each `sha256` being the hash of **the task file's bytes
 as found on disk at run time** — not the value declared in the registration.
-`skill_sha256` is the hash of the injected skill file's bytes, likewise as found at run
-time, or `null` when no skill file is present.
+
+`skill_sha256` depends on whether the registration has `skill_dir` (§1.4):
+
+- **Absent**: the sha256 of the single injected `SKILL.md`'s bytes, as found on disk at
+  run time — unchanged from before `skill_dir` existed, so a registration that has never
+  heard of it hashes exactly as it always did.
+- **Present**: the sha256 of `canonical(manifest)`, where `manifest` is a JSON array of
+  `{ path, sha256 }` — one entry per file anywhere in `skill_dir`, `path` a POSIX-relative
+  path from `skill_dir`'s root — over **every file in the directory**, not only
+  `SKILL.md`. Editing any reference file moves `H`; rewriting one with the exact same
+  bytes (a no-op reformat) does not, since the manifest hashes bytes, not mtimes or a
+  formatter's opinion.
+
+  **The array is sorted by the full `path` string, as plain code-unit comparison, after
+  the whole directory has been walked** — not by whatever order a depth-first walk with
+  a per-directory sort happens to visit files in. Those two are NOT the same ordering:
+  walking `a/` before its sibling file `a-b` (because the directory NAME `"a"` sorts
+  before the file name `"a-b"` at the level where they're actually siblings) visits
+  `a/x` before `a-b`, but sorting the full paths puts `"a-b"` first — `-` is code point
+  45, `/` is code point 47, so `"a-"` sorts before `"a/"`. An implementation that sorts
+  only within each directory during the walk, instead of sorting the complete path list
+  once afterward, produces a different `H` for the same directory contents. This is the
+  same code-unit ordering §2 uses for object keys.
+
+  **Not covered by the manifest, and therefore not by `H`:** empty directories, and file
+  modes/permissions. A directory that contains nothing is invisible to a manifest built
+  over files; a file's executable bit or other mode changing without its bytes changing
+  moves nothing. Both are copied into the sandbox exactly as found — this is a disclosed
+  gap in what `H` names, not a claim that either is impossible to change unnoticed.
+
+Either way, `null` when no skill is present at all — a structural failure the CLI
+rejects before spending anything, and hashing it as a distinct value keeps "no skill"
+from colliding with any real one. Once `skill_dir`'s root is confirmed to exist, any
+*other* problem reading it (see §1.4) is a structural failure, never a silent `null`.
 
 `H` is stamped into the report header and every ledger entry, abbreviated to its first 16
 hex characters for display.
@@ -412,24 +545,59 @@ per task and not one per batch: a directory shared across runs makes the check b
 point-in-time, so anything a run creates afterwards is visible to every later run in the
 other arm, with no error and no change of class.
 
-The subject is additionally invoked with `--disallowedTools Write,Edit,Bash`. No verifier
-reads anything but stdout, so the subject has no reason to touch its cwd, and an artifact
-it leaves behind can only ever be a contamination vector. The judge is not restricted; it
-runs in the same per-run sandbox, which is destroyed with the run.
+The subject is invoked with no tool-restriction flags at all -- `src/claude.mjs` carries
+`SUBJECT_DISALLOWED_TOOLS` unused, deliberately. Its comment explains why an earlier
+review recommended denying Write/Edit/Bash and this project didn't: cobra's
+`ic-agent-under-pressure` task hands the model a real failing test suite and grades
+whether it finds the bug, which *wants* those tools, and cobra's own published numbers
+were measured with no tool restriction, so an explicit deny list here would make the
+worked example non-comparable to the figures it exists to reproduce.
+
+It turns out not to matter either way, and this is worth stating plainly: headless mode
+itself already refuses any tool that would need interactive approval, before it runs,
+regardless of what the subject is invoked with. `-p` with `--setting-sources project` and
+no project settings present gives the CLI's own permission system nothing to approve
+against, so Write/Edit/Bash are refused by that system, not by a flag. The consequence is
+the same as if they'd been explicitly denied: **a skill whose method depends on running a
+script is measured here without that script ever running.** If a skill's SKILL.md tells
+the model to invoke a helper program, the treatment arm reads that instruction and cannot
+act on it; the measured effect is whatever the instruction achieves through the model's
+own reasoning alone, not through the tool it names. A skill this project cannot measure
+fairly is exactly a skill whose value depends on that gap.
+
+The judge is not tool-restricted, but it never shares the subject's sandbox: it gets its
+own freshly `mkdtemp`'d, isolation-checked directory per call, destroyed immediately
+after. A shared sandbox would let an unrestricted judge invocation read whatever the
+subject's treatment run left behind -- in particular a directory skill's `skill/` copy --
+straight off disk, which is the exact channel the "never sees the skill" guarantee below
+exists to close.
 
 Before each run, the sandbox is checked:
 
 - it must not be inside the repository root (found by walking up from the registration
   directory to the nearest `.git`, so a suite living in a subdirectory of a larger repo is
   still protected from that whole repo);
-- it must not contain `CLAUDE.md`, `.claude`, `skills`, or `AGENTS.md`.
+- it must not contain `CLAUDE.md`, `CLAUDE.local.md`, `.claude`, or `AGENTS.md`;
+- it must not contain a top-level `skills` entry that has a file named `SKILL.md`
+  (checked case-insensitively, at any depth beneath it) — Claude Code loads project
+  skills from `.claude/skills`, never from a top-level `skills/`, so a `skills/` tree
+  with no `SKILL.md` anywhere beneath it holds no skill and is allowed. A `skills` entry
+  that is not a directory, or that cannot be read, is refused unconditionally rather than
+  assumed clean.
 
 A failed check aborts the whole batch, not the one task: a sandbox that fails it means
 the environment is wrong, and every run in flight shares that environment.
 
 A fixture is copied fresh for every run and is checked by the same rule; a fixture
-carrying any of those four entries is refused outright rather than inspected, because it
-is indistinguishable by inspection from real leakage.
+carrying `CLAUDE.md`, `CLAUDE.local.md`, `.claude`, `AGENTS.md`, or a `skills/` entry
+that holds a `SKILL.md`, is refused outright rather than inspected, because it is
+indistinguishable by inspection from real leakage. Unlike the sandbox check above, which
+only runs once the batch is already under way, a declared fixture is also checked at
+**preflight** (including `--dry-run`): the CLI copies the fixture's own contents to a
+throwaway directory and runs this same check on it before any canary or subject call, so
+a fixture that would be refused fails structurally (exit 2) before anything is spent,
+rather than aborting mid-batch after the judge canaries for that run have already been
+paid for.
 
 Treatment differs from control in exactly one respect: `SKILL.md` is appended to the
 system prompt. Nothing else.
@@ -501,7 +669,8 @@ that produced it. The superseded dead records are listed under `reattempted` in 
 
 Each of these exits 2 and spends nothing:
 
-- **A different registration hash `H`.** Any change to a task file, `SKILL.md`, or
+- **A different registration hash `H`.** Any change to a task file, the skill
+  (`SKILL.md`, or any file under a registered `skill_dir`, §1.4), or
   `model`/`judge_model`/`reps` in `nullbench.json` moves `H` (§3), and the refusal names
   what changed. Updating a task's declared `sha256` to match does not help: `H` is over
   the bytes on disk.

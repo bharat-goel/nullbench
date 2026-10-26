@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadRegistration, RegistrationError } from "../src/prereg.mjs";
+import { loadRegistration, RegistrationError, patternDrift } from "../src/prereg.mjs";
 import { createHash } from "node:crypto";
 
 const sha = (s) => createHash("sha256").update(s).digest("hex");
@@ -156,6 +156,174 @@ test("the registration hash covers SKILL.md, not just the task files", () => {
   assert.notEqual(loadRegistration(dir).hash, b.hash);
 
   rmSync(dir, { recursive: true, force: true });
+});
+
+// Regression pin: computed on the pre-skill_dir code (see nullbench-skilldir-report.md).
+// If this ever changes, the skill_dir refactor moved H for a registration that never
+// mentions skill_dir at all -- exactly what item 1 of the brief forbids.
+test("skill_dir absent: H is byte-identical to the pinned pre-skill_dir value", () => {
+  const dir = mkdtempSync(join(tmpdir(), "nb-pin-"));
+  mkdirSync(join(dir, "tasks"));
+  const signal = JSON.stringify({ id: "sig", skill: "demo", kind: "signal", prompt: "Is 3 caught enough?", verify: { type: "any", patterns: ["denominator"] } });
+  writeFileSync(join(dir, "tasks", "sig.json"), signal);
+  const harm = JSON.stringify({ id: "harm", skill: "demo", kind: "harm", prompt: "B-tree vs GIN?", verify: { type: "none", patterns: ["goodhart"], maxWords: 500 } });
+  writeFileSync(join(dir, "tasks", "harm.json"), harm);
+  const tasks = [
+    { id: "sig", file: "tasks/sig.json", sha256: sha(signal), kind: "signal", predict: "helps" },
+    { id: "harm", file: "tasks/harm.json", sha256: sha(harm), kind: "harm", predict: "no-effect" },
+  ];
+  writeFileSync(join(dir, "nullbench.json"), JSON.stringify({ model: "sonnet", judge_model: "sonnet", reps: 10, tasks }, null, 2));
+  writeFileSync(join(dir, "SKILL.md"), "# demo skill\npinned regression fixture, do not change bytes\n");
+  assert.equal(loadRegistration(dir).hash, "0d8eca81ab61b751450b911d056eab3b56c297af3b033908a5e724950e734ab1");
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("skill_dir present: the registration hash covers every file in it, not only SKILL.md", () => {
+  const dir = mkdtempSync(join(tmpdir(), "nb-skilldir-"));
+  mkdirSync(join(dir, "tasks"));
+  const body = JSON.stringify({ id: "t", prompt: "p", verify: { type: "any", patterns: ["x"] } });
+  writeFileSync(join(dir, "tasks", "t.json"), body);
+  writeFileSync(join(dir, "nullbench.json"), JSON.stringify({
+    model: "sonnet", judge_model: "sonnet", reps: 4, skill_dir: "skill",
+    tasks: [{ id: "t", file: "tasks/t.json", sha256: sha(body), kind: "harm", predict: "no-effect" }],
+  }));
+  mkdirSync(join(dir, "skill"));
+  writeFileSync(join(dir, "skill", "SKILL.md"), "# demo\nsee references/foo.md");
+  mkdirSync(join(dir, "skill", "references"));
+  writeFileSync(join(dir, "skill", "references", "foo.md"), "reference content");
+
+  const before = loadRegistration(dir).hash;
+  writeFileSync(join(dir, "skill", "references", "foo.md"), "changed reference content");
+  const after = loadRegistration(dir).hash;
+  assert.notEqual(before, after, "editing a reference file, not SKILL.md itself, must move H");
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("skill_dir present: a missing SKILL.md inside it is reported like today's missing-skill case", () => {
+  const dir = mkdtempSync(join(tmpdir(), "nb-skilldir-nomd-"));
+  mkdirSync(join(dir, "tasks"));
+  const body = JSON.stringify({ id: "t", prompt: "p", verify: { type: "any", patterns: ["x"] } });
+  writeFileSync(join(dir, "tasks", "t.json"), body);
+  writeFileSync(join(dir, "nullbench.json"), JSON.stringify({
+    model: "sonnet", judge_model: "sonnet", reps: 4, skill_dir: "skill",
+    tasks: [{ id: "t", file: "tasks/t.json", sha256: sha(body), kind: "harm", predict: "no-effect" }],
+  }));
+  mkdirSync(join(dir, "skill")); // no SKILL.md inside
+  const r = loadRegistration(dir);
+  assert.equal(r.skill.kind, "dir");
+  assert.equal(r.hash, loadRegistration(dir).hash, "still loads; the CLI's own existence check reports the absence");
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("skill_dir overlapping the tasks directory is a structural failure, wired through loadRegistration", () => {
+  const dir = mkdtempSync(join(tmpdir(), "nb-skilldir-overlap-"));
+  mkdirSync(join(dir, "tasks"));
+  const body = JSON.stringify({ id: "t", prompt: "p", verify: { type: "any", patterns: ["x"] } });
+  writeFileSync(join(dir, "tasks", "t.json"), body);
+  writeFileSync(join(dir, "nullbench.json"), JSON.stringify({
+    model: "sonnet", judge_model: "sonnet", reps: 4, skill_dir: "tasks",
+    tasks: [{ id: "t", file: "tasks/t.json", sha256: sha(body), kind: "harm", predict: "no-effect" }],
+  }));
+  assert.throws(() => loadRegistration(dir), (e) => {
+    assert.ok(e instanceof RegistrationError);
+    assert.match(e.message, /tasks\/t\.json/);
+    return true;
+  });
+  rmSync(dir, { recursive: true, force: true });
+});
+
+// N2 (fix round 2), wired through loadRegistration: a skill_dir living inside a
+// declared fixture directory used to slip through with no drift raised at all --
+// makeCwd copies the WHOLE fixture into every arm's sandbox, control included, so this
+// would have put SKILL.md and every reference file into the control arm too.
+test("skill_dir nested inside a declared fixture is a structural failure, wired through loadRegistration", () => {
+  const dir = mkdtempSync(join(tmpdir(), "nb-skilldir-fxoverlap-"));
+  mkdirSync(join(dir, "tasks"));
+  mkdirSync(join(dir, "a-fixture", "sk"), { recursive: true });
+  const body = JSON.stringify({
+    id: "fx", prompt: "p", fixture: "a-fixture", verify: { type: "any", patterns: ["x"] },
+  });
+  writeFileSync(join(dir, "tasks", "fx.json"), body);
+  writeFileSync(join(dir, "nullbench.json"), JSON.stringify({
+    model: "sonnet", judge_model: "sonnet", reps: 4, skill_dir: "a-fixture/sk",
+    tasks: [{ id: "fx", file: "tasks/fx.json", sha256: sha(body), kind: "harm", predict: "no-effect" }],
+  }));
+  assert.throws(() => loadRegistration(dir), (e) => {
+    assert.ok(e instanceof RegistrationError);
+    assert.match(e.message, /a-fixture/);
+    return true;
+  });
+  rmSync(dir, { recursive: true, force: true });
+});
+
+// N6 (fix round 2), part 2: results/ (this suite's own run-output directory, holding
+// earlier raw subject/judge replies) and LEDGER.md (every past run's summary,
+// including predictions and per-task deltas) were not protected paths at all. A
+// skill_dir reaching either would copy prior replies -- possibly including a judge's
+// own graded verdicts, or an earlier run's actual pass/fail pattern -- into the
+// treatment sandbox as part of "the skill".
+test("skill_dir overlapping results/ is a structural failure", () => {
+  const dir = mkdtempSync(join(tmpdir(), "nb-skilldir-results-"));
+  mkdirSync(join(dir, "tasks"));
+  mkdirSync(join(dir, "results"), { recursive: true });
+  const body = JSON.stringify({ id: "t", prompt: "p", verify: { type: "any", patterns: ["x"] } });
+  writeFileSync(join(dir, "tasks", "t.json"), body);
+  writeFileSync(join(dir, "nullbench.json"), JSON.stringify({
+    model: "sonnet", judge_model: "sonnet", reps: 4, skill_dir: "results",
+    tasks: [{ id: "t", file: "tasks/t.json", sha256: sha(body), kind: "harm", predict: "no-effect" }],
+  }));
+  assert.throws(() => loadRegistration(dir), (e) => {
+    assert.ok(e instanceof RegistrationError);
+    assert.match(e.message, /results/);
+    return true;
+  });
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("skill_dir overlapping LEDGER.md is a structural failure", () => {
+  // LEDGER.md always sits at the suite root (ledger.mjs writes it beside
+  // nullbench.json), so the only way a strict-subdirectory skill_dir can "overlap"
+  // with it at all is by literally being pointed at that path -- exactly the mistake
+  // this protects against, not a naturally-arising nested case the way a fixture or a
+  // task file (which genuinely can sit several directories deep) can be.
+  const dir = mkdtempSync(join(tmpdir(), "nb-skilldir-ledger-"));
+  mkdirSync(join(dir, "tasks"));
+  writeFileSync(join(dir, "LEDGER.md"), "## an earlier run\n");
+  const body = JSON.stringify({ id: "t", prompt: "p", verify: { type: "any", patterns: ["x"] } });
+  writeFileSync(join(dir, "tasks", "t.json"), body);
+  writeFileSync(join(dir, "nullbench.json"), JSON.stringify({
+    model: "sonnet", judge_model: "sonnet", reps: 4, skill_dir: "LEDGER.md",
+    tasks: [{ id: "t", file: "tasks/t.json", sha256: sha(body), kind: "harm", predict: "no-effect" }],
+  }));
+  assert.throws(() => loadRegistration(dir), (e) => {
+    assert.ok(e instanceof RegistrationError);
+    assert.match(e.message, /LEDGER\.md/);
+    return true;
+  });
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("skill_dir equal to the registration directory itself is a structural failure", () => {
+  const dir = mkdtempSync(join(tmpdir(), "nb-skilldir-dot-"));
+  mkdirSync(join(dir, "tasks"));
+  const body = JSON.stringify({ id: "t", prompt: "p", verify: { type: "any", patterns: ["x"] } });
+  writeFileSync(join(dir, "tasks", "t.json"), body);
+  writeFileSync(join(dir, "nullbench.json"), JSON.stringify({
+    model: "sonnet", judge_model: "sonnet", reps: 4, skill_dir: ".",
+    tasks: [{ id: "t", file: "tasks/t.json", sha256: sha(body), kind: "harm", predict: "no-effect" }],
+  }));
+  assert.throws(() => loadRegistration(dir), RegistrationError);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("patternDrift names the actual source (SKILL.md by default, or a caller-supplied label)", () => {
+  const tasks = [{ id: "sig", kind: "signal", spec: { verify: { type: "any", patterns: ["denominator"] } } }];
+  const defaultLabel = patternDrift(tasks, "text mentioning denominator somewhere");
+  assert.match(defaultLabel[0].detail, /appears verbatim in SKILL\.md/);
+
+  const skillDirLabel = patternDrift(tasks, "text mentioning denominator somewhere", "skill_dir");
+  assert.match(skillDirLabel[0].detail, /appears verbatim in skill_dir/);
+  assert.doesNotMatch(skillDirLabel[0].detail, /SKILL\.md/);
 });
 
 test("a malformed task entry is a RegistrationError, not a TypeError escaping as exit 1", () => {

@@ -48,19 +48,23 @@ export function parseVerdict(text) {
 
 export async function runJudge({ task, reply, model, cwd }) {
   const { out, code } = await invoke({ prompt: judgePrompt(task, reply), cwd, model });
+  // `raw` is the judge's own unparsed stdout, carried through on every return path. Not
+  // used for grading -- parseVerdict already does that -- but it lets a caller capture
+  // what the judge actually saw/produced (runner.mjs writes it to rawDir) without a
+  // second, wasteful invocation just to observe the same call.
   // `failed` means "no answer", not "wrong answer" -- the run leaves the denominator
   // entirely (PROTOCOL.md 5.1). A judge that never ran produced no grade, so the
   // subject run it was grading is ungraded. Without this flag a judge rate-limit
   // partway through a batch drove both arms toward 0%, cleared the graded-run floor
   // (nothing was marked failed, so no cell looked thin) and printed a tight, quotable
   // null. That is FAILURES.md entry 8 on the judge path.
-  if (code !== 0 || !out) return { pass: false, failed: true, why: "judge failed to run" };
+  if (code !== 0 || !out) return { pass: false, failed: true, why: "judge failed to run", raw: out };
   const v = parseVerdict(out);
   // Deliberately NOT `failed`. The judge answered; the answer was unusable. That is a
   // graded FAIL and belongs in the denominator -- collapsing it into the branch above
   // would let a judge that reliably waffles silently shrink every batch instead.
-  if (!v) return { pass: false, why: "judge returned no verdict" };
-  return { pass: v.pass, why: `judge: ${v.why}` };
+  if (!v) return { pass: false, why: "judge returned no verdict", raw: out };
+  return { pass: v.pass, why: `judge: ${v.why}`, raw: out };
 }
 
 // Known-pass and known-fail replies graded before any real run. A judge that misgrades

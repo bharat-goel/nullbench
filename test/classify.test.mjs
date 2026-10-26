@@ -21,6 +21,22 @@ test("minGraded floors at 3 and otherwise takes 80% of reps", () => {
   assert.equal(minGraded(20), 16);
 });
 
+// N4 (fix round 2): with an override present, registration.skill.kind is ALWAYS "file"
+// (resolveSkill(dir, {override}) never returns kind:"dir" -- --skill is always a single
+// file), so a check keyed on skill.kind can never fire for a skill_dir suite.
+// registeredSkillDir tracks what nullbench.json itself declared, independent of
+// skill.kind. See the e2e test in test/e2e/protocol.test.mjs for the same thing tested
+// through loadRegistration on a real skill_dir suite, not built by hand here.
+test("a --skill override names skill_dir, not SKILL.md, when the registration declared a skill_dir", () => {
+  const dirRegistration = { ...registration, skill: { kind: "file", mdFile: "/elsewhere/other.md" }, registeredSkillDir: "skill" };
+  const r = classify({
+    registration: dirRegistration, requested: { ...requested, skillOverride: "/elsewhere/other.md" }, gradedCounts: full, canaryOk: null,
+  });
+  assert.equal(r.klass, "EXPLORATORY");
+  assert.ok(r.reasons.some((x) => /registered skill_dir/.test(x)), "must name skill_dir, not SKILL.md");
+  assert.ok(!r.reasons.some((x) => /registered SKILL\.md/.test(x)));
+});
+
 test("a clean run is confirmatory", () => {
   const r = classify({ registration, requested, gradedCounts: full, canaryOk: null });
   assert.equal(r.klass, "CONFIRMATORY");

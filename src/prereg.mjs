@@ -15,14 +15,10 @@ import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { canonicalJSON } from "./canonical.mjs";
+import { resolveSkill, hashSkill } from "./skill.mjs";
 
-export class RegistrationError extends Error {
-  constructor(problems) {
-    super(`registration is not executable:\n  - ${problems.join("\n  - ")}`);
-    this.name = "RegistrationError";
-    this.problems = problems;
-  }
-}
+export { RegistrationError } from "./errors.mjs";
+import { RegistrationError } from "./errors.mjs";
 
 const KINDS = new Set(["signal", "harm"]);
 const PREDICTIONS = new Set(["helps", "no-effect", "harms"]);
@@ -48,6 +44,9 @@ export function loadRegistration(dir, skillFile = null) {
   }
   if (!Number.isInteger(raw.reps) || raw.reps < 1) problems.push(`"reps" must be a positive integer`);
   if (!Array.isArray(raw.tasks) || raw.tasks.length === 0) problems.push(`"tasks" must be a non-empty array`);
+  if (raw.skill_dir !== undefined && (typeof raw.skill_dir !== "string" || !raw.skill_dir)) {
+    problems.push(`"skill_dir" must be a non-empty string`);
+  }
 
   if (problems.length) throw new RegistrationError(problems);
 
@@ -98,18 +97,40 @@ export function loadRegistration(dir, skillFile = null) {
     drift.push({ code: "NO_HARM_TASK", detail: "no harm task; a suite with no negative control cannot be confirmatory" });
   }
 
-  // SKILL.md is the experiment's independent variable -- the single thing that differs
+  // The skill is the experiment's independent variable -- the single thing that differs
   // between the arms -- and leaving it out of H meant editing it between registration and
   // run changed nothing about the stamp, and `--skill elsewhere/SKILL.md` produced a
   // CONFIRMATORY report under the same H as the registered run. A hash that claims to
-  // name what really ran has to cover it. `null` when the file is absent or unreadable:
-  // that is a structural failure the CLI rejects before spending anything, and hashing it
-  // as a distinct value keeps "no skill" from colliding with any real skill.
-  const skillPath = skillFile ?? join(dir, "SKILL.md");
-  let skillSha = null;
-  try {
-    skillSha = sha256(readFileSync(skillPath));
-  } catch { /* absent or unreadable; the CLI's structural check reports it */ }
+  // name what really ran has to cover it. `resolveSkill` picks a single SKILL.md
+  // (unchanged shape, so H does not move for a registration with no skill_dir) or a
+  // skill_dir, whose every file -- not only SKILL.md -- is covered by hashSkill's
+  // manifest. null when absent or unreadable: that is a structural failure the CLI
+  // rejects before spending anything, and hashing it as a distinct value keeps "no
+  // skill" from colliding with any real skill.
+  // A skill_dir that swallowed the registration file, the canary bank or a task file
+  // would copy that content into the treatment sandbox as part of "the skill" -- exactly
+  // what PATTERN_IN_SKILL and the leakage scan exist to keep out. Built from the parsed,
+  // sorted `tasks` (not `raw.tasks`) so a fixture path comes from the same spec the
+  // runner will actually use.
+  const protectedPaths = [
+    join(dir, "nullbench.json"),
+    join(dir, "canaries.json"),
+    // results/ holds every earlier run's raw subject and judge replies; LEDGER.md holds
+    // every earlier run's summary, predictions included. A skill_dir reaching either
+    // would copy prior output -- possibly a judge's own verdicts, or the exact
+    // pass/fail pattern of an earlier run -- into the treatment sandbox as "the skill".
+    join(dir, "results"),
+    join(dir, "LEDGER.md"),
+    ...tasks.map((t) => join(dir, t.file)),
+  ];
+  // Fixtures are checked separately and in BOTH directions (resolveSkill/
+  // validateSkillDirPath): a fixture is copied into every arm's sandbox, control
+  // included, so skill_dir being inside, equal to, or containing one would leak the
+  // skill into the control arm too -- not merely into treatment, which is all
+  // `protectedPaths` above is built to catch.
+  const fixtureDirs = tasks.filter((t) => typeof t.spec?.fixture === "string").map((t) => join(dir, t.spec.fixture));
+  const skill = resolveSkill(dir, { override: skillFile, skillDir: raw.skill_dir, protectedPaths, fixtureDirs });
+  const skillSha = hashSkill(skill);
 
   // Hashed over actual contents, not declared ones, so the hash names what really ran.
   const body = canonicalJSON({
@@ -119,7 +140,17 @@ export function loadRegistration(dir, skillFile = null) {
   });
   const hash = sha256(Buffer.from(body, "utf8"));
 
-  return { config: { model: raw.model, judge_model: raw.judge_model, reps: raw.reps }, tasks, hash, drift, skillSha };
+  // Kept separate from `skill` (the resolved descriptor for THIS run) because an
+  // override always resolves to kind:"file" regardless of what was registered --
+  // `skill.kind` alone can never tell classify.mjs "this suite registered a skill_dir"
+  // once --skill is in play. `registeredSkillDir` answers a different, narrower
+  // question: what does nullbench.json itself declare, independent of any override.
+  const registeredSkillDir = typeof raw.skill_dir === "string" ? raw.skill_dir : null;
+
+  return {
+    config: { model: raw.model, judge_model: raw.judge_model, reps: raw.reps },
+    tasks, hash, drift, skill, skillSha, registeredSkillDir,
+  };
 }
 
 // Verifier patterns lifted verbatim out of SKILL.md.
@@ -158,7 +189,12 @@ export function loadRegistration(dir, skillFile = null) {
 // What this does NOT catch, and the documentation must not claim otherwise: a paraphrase
 // of a skill phrase, a word the skill merely makes more likely, or a pattern the author
 // chose after reading skill-influenced replies. It catches a verbatim lift.
-export function patternDrift(tasks, skillText) {
+// `sourceLabel` names what actually got scanned in the drift message -- "SKILL.md" by
+// default (the single-file shape), or a caller-supplied label such as "skill_dir" when
+// the hit could be in any reference file, not necessarily SKILL.md itself. Saying
+// "appears verbatim in SKILL.md" for a match that only exists in a reference file would
+// send a suite author looking in the wrong place.
+export function patternDrift(tasks, skillText, sourceLabel = "SKILL.md") {
   const hay = String(skillText).toLowerCase();
   const out = [];
   for (const t of tasks) {
@@ -175,7 +211,7 @@ export function patternDrift(tasks, skillText) {
       if (hay.includes(needle)) {
         out.push({
           code: "PATTERN_IN_SKILL",
-          detail: `task "${t.id}" verifier pattern "${p}" appears verbatim in SKILL.md; ` +
+          detail: `task "${t.id}" verifier pattern "${p}" appears verbatim in ${sourceLabel}; ` +
             `the treatment arm can pass it by reading its own system prompt`,
         });
       }

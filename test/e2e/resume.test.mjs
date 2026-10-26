@@ -13,7 +13,7 @@ import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { main } from "../../src/cli.mjs";
-import { makeSuite, useStub, clearStub, capture, ledger, SIGNAL, SIGNAL2, HARM, JUDGE } from "./helpers.mjs";
+import { makeSuite, useSkillDir, useStub, clearStub, capture, ledger, SIGNAL, SIGNAL2, HARM, JUDGE } from "./helpers.mjs";
 
 const BIN = fileURLToPath(new URL("../../bin/nullbench.mjs", import.meta.url));
 
@@ -184,6 +184,23 @@ test("REFUSED: a changed SKILL.md, or a different reps/model/judge model, cannot
   assert.equal(await main([dir, "--yes", "--resume", first.stamp], cap), 2);
   assert.match(cap.text(), /SKILL\.md changed/);
   assert.equal(runs(dir).length, 1);
+});
+
+// A skill_dir's reference files are part of the independent variable as much as its
+// SKILL.md is: the treatment arm can load them. Editing one between the interrupted run
+// and the resume has to refuse exactly as editing SKILL.md does, and the message has to
+// name skill_dir -- "SKILL.md changed" would send the reader to a file that didn't.
+test("REFUSED: a changed file in skill_dir, not only its SKILL.md, cannot be resumed", async () => {
+  const dir = makeSuite({ tasks: ALL });
+  useSkillDir(dir, { "SKILL.md": "# demo skill\n", "references/notes.md": "the first reference" });
+  useStub(dir, WORKING);
+  const first = await interrupted(dir, 15);
+
+  writeFileSync(join(dir, "skill", "references", "notes.md"), "an edited reference");
+  const cap = capture();
+  assert.equal(await main([dir, "--yes", "--resume", first.stamp], cap), 2);
+  assert.match(cap.text(), /skill_dir "skill" changed/);
+  assert.equal(runs(dir).length, 1, "a refused resume writes no run");
 });
 
 test("REFUSED: the same run cannot be resumed twice; the resume is resumed instead", async () => {

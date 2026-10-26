@@ -1,9 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { assertIsolated, distinctiveTerms, scanControlLeakage } from "../src/leakage.mjs";
+import { assertIsolated, distinctiveTerms, distinctiveTermsForSkill, scanControlLeakage } from "../src/leakage.mjs";
+import { resolveSkill, hashSkill, skillFilePaths } from "../src/skill.mjs";
+import { fileURLToPath } from "node:url";
+
+const COBRA_SKILL_MD = fileURLToPath(new URL("../examples/cobra/SKILL.md", import.meta.url));
 
 test("a clean temp directory outside the repo is isolated", () => {
   const dir = mkdtempSync(join(tmpdir(), "nb-iso-"));
@@ -35,13 +39,94 @@ test("the sandbox cannot be the repository root itself", () => {
 });
 
 test("the exact files that caused the original leak are detected", () => {
-  for (const name of ["CLAUDE.md", ".claude", "skills"]) {
+  for (const name of ["CLAUDE.md", ".claude"]) {
     const dir = mkdtempSync(join(tmpdir(), "nb-iso-"));
     if (name === "CLAUDE.md") writeFileSync(join(dir, name), "# project");
     else mkdirSync(join(dir, name));
     const r = assertIsolated(dir, "/elsewhere");
     assert.equal(r.ok, false, `${name} should break isolation`);
     assert.ok(r.problems.some((p) => p.includes(name)));
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// A real third-party eval fixture (skill-audit Task 5, otel-go) names a path under
+// `skills/otel-go/...` in its byte-identical prompt. assertIsolated used to refuse ANY
+// top-level `skills` entry unconditionally -- correct for the original leak (an
+// installed skill directory sitting where the control arm could read it), wrong for a
+// fixture whose `skills/` holds no skill at all, just a file the prompt happens to
+// name at that path. Claude Code loads project skills from `.claude/skills`, never
+// from a top-level `skills/`, so a `skills/` tree with no `SKILL.md` anywhere beneath
+// it cannot be what the original leak was about.
+test("a top-level skills/ with no SKILL.md anywhere beneath it is isolated", () => {
+  const dir = mkdtempSync(join(tmpdir(), "nb-iso-skills-"));
+  mkdirSync(join(dir, "skills", "otel-go", "evals", "files"), { recursive: true });
+  writeFileSync(join(dir, "skills", "otel-go", "evals", "files", "go-v145-upgrade.md"), "# fixture file, not a skill");
+  const r = assertIsolated(dir, "/elsewhere");
+  assert.equal(r.ok, true, `problems: ${r.problems.join("; ")}`);
+  assert.deepEqual(r.problems, []);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("skills/x/SKILL.md is still refused", () => {
+  const dir = mkdtempSync(join(tmpdir(), "nb-iso-skills-"));
+  mkdirSync(join(dir, "skills", "x"), { recursive: true });
+  writeFileSync(join(dir, "skills", "x", "SKILL.md"), "# a real skill");
+  const r = assertIsolated(dir, "/elsewhere");
+  assert.equal(r.ok, false);
+  assert.ok(r.problems.some((p) => p.includes("skills")));
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("skills/x/skill.md is refused case-insensitively", () => {
+  const dir = mkdtempSync(join(tmpdir(), "nb-iso-skills-"));
+  mkdirSync(join(dir, "skills", "x"), { recursive: true });
+  writeFileSync(join(dir, "skills", "x", "skill.md"), "# a real skill, oddly cased");
+  const r = assertIsolated(dir, "/elsewhere");
+  assert.equal(r.ok, false);
+  assert.ok(r.problems.some((p) => p.includes("skills")));
+  rmSync(dir, { recursive: true, force: true });
+});
+
+// hasSkillMdBeneath used to `continue` past a symlink entry, i.e. treat it as neither
+// a file nor a directory worth looking at -- fine for the walk not throwing, wrong for
+// the safety property: a symlink named SKILL.md (pointing anywhere) or a symlinked
+// directory standing in for a real skill directory both let a top-level skills/ pass
+// as "no SKILL.md beneath it" while actually resolving to one. Treat ANY symlink
+// beneath skills/ the same as an unreadable directory: conservatively assume it could
+// hold a skill, and refuse.
+test("skills/x/SKILL.md as a symlink is refused, not silently skipped", () => {
+  const dir = mkdtempSync(join(tmpdir(), "nb-iso-skills-"));
+  mkdirSync(join(dir, "skills", "x"), { recursive: true });
+  const realSkillMd = join(dir, "real-SKILL.md");
+  writeFileSync(realSkillMd, "# a real skill, reached via a symlink");
+  symlinkSync(realSkillMd, join(dir, "skills", "x", "SKILL.md"));
+  const r = assertIsolated(dir, "/elsewhere");
+  assert.equal(r.ok, false, `problems: ${r.problems.join("; ")}`);
+  assert.ok(r.problems.some((p) => p.includes("skills")));
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("skills/link -> a symlinked directory pointing at a skill is refused, not silently skipped", () => {
+  const dir = mkdtempSync(join(tmpdir(), "nb-iso-skills-"));
+  mkdirSync(join(dir, "skills"), { recursive: true });
+  const realSkillDir = join(dir, "real-skill-dir");
+  mkdirSync(realSkillDir);
+  writeFileSync(join(realSkillDir, "SKILL.md"), "# a real skill, reached via a symlinked directory");
+  symlinkSync(realSkillDir, join(dir, "skills", "link"));
+  const r = assertIsolated(dir, "/elsewhere");
+  assert.equal(r.ok, false, `problems: ${r.problems.join("; ")}`);
+  assert.ok(r.problems.some((p) => p.includes("skills")));
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("CLAUDE.md, CLAUDE.local.md, .claude and AGENTS.md stay refused unconditionally, even with no skills/ present", () => {
+  for (const name of ["CLAUDE.md", "CLAUDE.local.md", ".claude", "AGENTS.md"]) {
+    const dir = mkdtempSync(join(tmpdir(), "nb-iso-unc-"));
+    if (name === ".claude") mkdirSync(join(dir, name));
+    else writeFileSync(join(dir, name), "# project");
+    const r = assertIsolated(dir, "/elsewhere");
+    assert.equal(r.ok, false, `${name} must still be refused unconditionally`);
     rmSync(dir, { recursive: true, force: true });
   }
 });
@@ -121,6 +206,39 @@ And this is after another separator.`;
   // "perverse incentive" should appear in terms since the first section wasn't stripped
   assert.ok(terms.some((t) => t.includes("perverse incentive")),
     "terms from first section must not be lost to false frontmatter stripping");
+});
+
+// Regression guard for the fix-round-1 bug: cli.mjs's leakage scan switched from
+// reading SKILL.md directly to distinctiveTerms(combinedSkillText(skill)), and
+// combinedSkillText's leading "\n" broke frontmatter stripping for EVERY registration,
+// not only skill_dir ones -- examples/cobra (no skill_dir) started pulling terms out of
+// its own YAML frontmatter ("before adopting", "health check", "references
+// attribution") instead of its body. distinctiveTermsForSkill must reproduce exactly
+// what distinctiveTerms(rawText) gives on origin/main for a plain single-file skill.
+test("distinctiveTermsForSkill reproduces origin/main's leakage terms for examples/cobra (no skill_dir)", () => {
+  const skill = resolveSkill(fileURLToPath(new URL("../examples/cobra/", import.meta.url)), {});
+  const terms = distinctiveTermsForSkill(skillFilePaths(skill));
+  assert.deepEqual(terms, distinctiveTerms(readFileSync(COBRA_SKILL_MD, "utf8")),
+    "must match distinctiveTerms called directly on SKILL.md's own raw text");
+  assert.ok(!terms.includes("before adopting"), "must not pull terms from YAML frontmatter");
+  assert.ok(!terms.includes("health check"), "must not pull terms from YAML frontmatter");
+  assert.ok(!terms.includes("references attribution"), "must not pull terms from YAML frontmatter");
+});
+
+test("distinctiveTermsForSkill merges per-file terms for a directory skill, stripping each file's own frontmatter", () => {
+  const dir = mkdtempSync(join(tmpdir(), "nb-leak-dir-"));
+  mkdirSync(join(dir, "skill"));
+  writeFileSync(join(dir, "skill", "SKILL.md"),
+    "---\ndescription: frontmatter body one\n---\n\nAsk what a count leaves out before treating it as evidence.");
+  mkdirSync(join(dir, "skill", "references"));
+  writeFileSync(join(dir, "skill", "references", "notes.md"),
+    "---\ndescription: frontmatter body two\n---\n\nWatch for the perverse incentive in a coverage gate.");
+  const skill = resolveSkill(dir, { skillDir: "skill" });
+  hashSkill(skill);
+  const terms = distinctiveTermsForSkill(skillFilePaths(skill));
+  assert.ok(terms.some((t) => t.includes("perverse incentive")), "body content from the reference file must come through");
+  assert.ok(!terms.some((t) => t.includes("frontmatter body")), "frontmatter from EITHER file must not leak into terms");
+  rmSync(dir, { recursive: true, force: true });
 });
 
 test("distinctiveTerms correctly strips actual YAML frontmatter", () => {
