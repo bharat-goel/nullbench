@@ -39,3 +39,11 @@ factual-accuracy         harm   predict=no-effect  10/10 ->  10/10    +0.0pp [-2
 shape                    signal predict=helps       0/10 ->  10/10  +100.0pp [+60.7pp, +100.0pp]  HIT
 average across signal tasks: suppressed — 1 of 1 signal tasks discriminate; an average over fewer than two is not a finding
 ```
+
+## 2026-09-24T00:16:06Z · CONFIRMATORY · H=6a4ac8cdf32d57b9
+```
+model=sonnet judge=sonnet reps=10
+factual-accuracy         harm   predict=no-effect  10/10 ->  10/10    +0.0pp [-27.8pp, +27.8pp]  HIT  (non-discriminating)
+shape                    signal predict=helps       0/10 ->  10/10  +100.0pp [+60.7pp, +100.0pp]  HIT
+average across signal tasks: suppressed — 1 of 1 signal tasks discriminate; an average over fewer than two is not a finding
+```

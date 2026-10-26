@@ -27,3 +27,11 @@ reasoning                signal predict=no-effect  10/10 ->  10/10    +0.0pp [-2
 vocabulary-leak          harm   predict=no-effect  10/10 ->  10/10    +0.0pp [-27.8pp, +27.8pp]  HIT  (non-discriminating)
 average across signal tasks: suppressed — 0 of 1 signal tasks discriminate; an average over fewer than two is not a finding
 ```
+
+## 2026-09-24T00:14:46Z · CONFIRMATORY · H=d3331de4d78e20b4
+```
+model=sonnet judge=sonnet reps=10
+reasoning                signal predict=no-effect  10/10 ->  10/10    +0.0pp [-27.8pp, +27.8pp]  HIT  (non-discriminating)
+vocabulary-leak          harm   predict=no-effect  10/10 ->  10/10    +0.0pp [-27.8pp, +27.8pp]  HIT  (non-discriminating)
+average across signal tasks: suppressed — 0 of 1 signal tasks discriminate; an average over fewer than two is not a finding
+```
