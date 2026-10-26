@@ -244,6 +244,19 @@ export async function main(argv, { stdout = process.stdout, stdin = process.stdi
       { fixtureRoot: dir, sourceLabel: skill.kind === "dir" ? "skill_dir" : "SKILL.md" }).map((w) => w.detail));
   } catch { /* unreadable SKILL.md: as above */ }
 
+  // Headless -p refuses Write, Edit and Bash (PROTOCOL.md §7). A task that hands the
+  // subject a project and grades what it produces often gets "I couldn't write the
+  // file" back, in both arms -- FAILURES.md entry 14. The registration cannot say
+  // whether a task needs a write, so this is disclosure, not a gate.
+  const fixturedJudged = registration.tasks.filter((t) => requested.taskIds.includes(t.id) &&
+    t.spec.verify?.type === "judge" && typeof t.spec.fixture === "string");
+  if (fixturedJudged.length) {
+    preflightWarnings.push(
+      `judge-graded task(s) ${fixturedJudged.map((t) => `"${t.id}"`).join(", ")} run in a fixture project, and ` +
+      `headless runs refuse Write, Edit and Bash: a reply may describe a refused write instead of containing ` +
+      `the work, in both arms (FAILURES.md entry 14)`);
+  }
+
   // Canaries are loaded (and validated) here, before the dry-run return, not just
   // before they are run. A broken canaries.json -- one that still carries cobra's
   // "_comment" key, say -- would otherwise pass a free dry run and only abort once the

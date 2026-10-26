@@ -83,6 +83,7 @@ Only the following:
   and their conditions, the graded-run floor, and a ledger with no path around the append.
 - The rule that a mean is suppressed below two discriminating signal tasks, and that a
   delta is never printed without its interval.
-- `FAILURES.md` as a document — the organisation of thirteen known failures into four
-  classes, and the discipline of marking three of them open. The failures themselves were
-  found by the cobra harness; this catalogs them.
+- `FAILURES.md` as a document — the organisation of fourteen known failures into five
+  classes, and the discipline of marking the open ones open. Thirteen of the failures were
+  found by the cobra harness, and entry 14 by nullbench's own skill-audit runs; this
+  catalogs them.
