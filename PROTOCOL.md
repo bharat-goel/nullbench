@@ -113,6 +113,7 @@ A `nullbench.json` committed to the repository **before** the run.
 | `tasks[].kind` | `signal` \| `harm` | what the task is for |
 | `tasks[].predict` | `helps` \| `no-effect` \| `harms` | mandatory, recorded whether or not it is borne out |
 | `skill_dir` | optional, non-empty string | relative to the registration's directory; when present, the skill under test is that whole directory rather than a single `SKILL.md` (§1.4) |
+| `h_version` | optional, `1` \| `2` | which registration-hash formula applies; absent means `1`. `2` also covers fixture contents and `canaries.json` (§3.1) |
 
 JSON rather than TOML because Node ships no TOML parser — TOML would cost this project
 its only runtime dependency — and, more importantly, because the hash in §3 requires a
@@ -163,7 +164,8 @@ exists to stop.
 
 ### 1.3 Canaries
 
-A suite with any judge-graded task should ship `canaries.json` beside the registration:
+A suite with any judge-graded task should ship `canaries.json` beside the registration
+(covered by `H` only under `"h_version": 2` — §3.1):
 
 ```json
 { "<task-id>": [ { "label": "obvious-pass", "reply": "...", "expect": "PASS" } ] }
@@ -180,6 +182,17 @@ Canaries are loaded and validated at preflight, before the confirmation prompt, 
 malformed file costs nothing. They are *run* only after confirmation. A judge-graded
 suite with no `canaries.json` is not a structural failure: it is the explicitly un-gated
 state, reported as such and unable to be confirmed.
+
+**Which canaries failed is kept, not only how many.** Every canary the judge misgraded is
+named with the expected verdict, the judge's verdict and the judge's stated reason, and
+every canary call that never answered is named too, in the report (every class, VOID
+included) and whole under `canary` in `records.json`. The ledger entry carries one
+`canary misgraded:` line per misgrade (id, expected, judge's verdict; not the reason).
+Each canary's `label` must be a non-empty single-line string and its `expect` `PASS` or
+`FAIL` (any case); anything else is a structural failure. A
+count alone cannot say whether the judge erred strict or lenient, or on which rubric, and
+recovering that would mean paying for the canaries again. (An audit lost exactly this from
+three paid runs before it was recorded.)
 
 ### 1.4 `skill_dir`
 
@@ -368,6 +381,51 @@ Two properties follow, and both are deliberate:
 (The design document specified a concatenation over the whole registration file; §5.2
 there was amended to this formula on 2026-09-17, with the reasoning above.)
 
+### 3.1 `h_version` 2: fixtures and canaries
+
+The formula above is **version 1**, and it does not cover two things a run depends on:
+
+- **Fixture contents.** A fixture is copied into *both* arms' sandboxes. Only its declared
+  *name* is in `H` (through the task file's bytes); its files are not. A fixture could be
+  edited after freezing — including one that changes what the control arm can see — with
+  `H` unchanged.
+- **`canaries.json`.** The canary set is what certifies the judge. It could be edited after
+  freezing — say, relabelled to match how the judge actually behaved — with `H` unchanged.
+
+A registration opts into the stronger hash with `"h_version": 2` in `nullbench.json`:
+
+```
+H = sha256(canonical({
+      model, judge_model, reps, skill_sha256,
+      tasks: [ { id, kind, predict, sha256 } ],
+      h_version: 2,
+      fixtures: [ { name, sha256 } ],     // each distinct declared fixture, sorted by name
+      canaries_sha256                     // sha256 of canaries.json's bytes, or null if absent
+    }))
+```
+
+Each fixture's `sha256` is taken over a manifest built the same way as a `skill_dir`'s
+(§3 above): one `{ path, sha256 }` per regular file, sorted by full path after the walk.
+Two other cases: a fixture that is a single regular file hashes as that file's bytes, and
+a declared fixture that does not exist hashes to `null` (preflight rejects it for any task
+that runs; a `--task` run that skips its owner leaves it `null` in `H`). As with
+`skill_dir`, empty directories and file modes are not covered.
+
+**Under `h_version` 2 a symlink anywhere in a fixture, or a symlinked fixture root, is a
+structural failure.** Recording a link's target string would not cover what the run reads:
+the copy into the sandbox rewrites a relative link into an absolute path back into the
+source tree, so the run reads the live file behind it — possibly outside the fixture —
+whose bytes `H` never saw. A `canaries.json` that exists but is not a readable regular file
+is likewise structural. Neither rule applies to version 1.
+
+**Why opt-in, not a change to version 1.** Folding these into the default formula would
+move `H` for every existing registration that has a fixture or a canary file, including
+ones whose runs are already published and ledgered under that `H`. A frozen `H` that
+changes when the tool is upgraded stops proving anything. So version 1 stays
+byte-identical, absent `h_version` means 1, and a v1 registration that has a fixture or
+`canaries.json` gets a preflight note saying what its `H` does not cover. **New
+registrations should declare `"h_version": 2`.** Any other value is a structural failure.
+
 ---
 
 ## 4. Report classes
@@ -413,8 +471,9 @@ data problem rather than a registration problem, and it takes precedence — a b
 both drifted and 83% dead is VOID, because the registration question is moot when there is
 no data to classify.
 
-**No per-task figures and no average are reported.** The report stops after the header and
-the reasons list; there is no table, and there is no `n/a` cell, because there is no table
+**No per-task figures and no average are reported.** The report stops after the header,
+the reasons list, and — when any canary was misgraded or never answered — the list of which
+ones (§1.3); there is no table, and there is no `n/a` cell, because there is no table
 to put one in. What a reader needs is still printed: the reasons list names every thin
 cell as `task "<id>" <arm>: <k> graded runs, <n> required`, and the same reasons are
 written into the ledger entry. The run appends to the ledger like any other. **Exit 1.**
@@ -507,12 +566,19 @@ can see the runs that did not make the README.
 ## <ISO 8601 UTC timestamp> · <CLASS> · H=<first 16 hex of H>
 ```
 ```
-model=<model> judge=<judge_model> reps=<reps>
+model=<model> judge=<judge_model> reps=<reps>[ backend=<path>]
 <task-id>            <kind>  predict=<predict>  <k>/<n> -> <k>/<n>   <delta>pp [<lo>pp, <hi>pp]  <HIT|MISS>[  (non-discriminating)]
 ...
 average across signal tasks: suppressed — <reason>
 note: <each reason and warning, one per line>
+canary misgraded: <task-id>:<label> (expected <PASS|FAIL>, judge said <PASS|FAIL>)
 ```
+
+`backend=` appears only when `NULLBENCH_CLAUDE_BIN` replaced the hosted `claude` CLI. The
+model names on that line are the *registered* ones; with an override, nothing verifies that
+the model that answered is the one named. The report header carries the same note, and
+`records.json` records it as `requested.backend`. Without it, the 2026-09-18 bracket runs —
+answered by a local 12B model through an adapter — were ledgered as `model=sonnet`.
 
 A prediction scores **HIT** when the observed interval agrees with what was declared:
 `helps` needs an interval entirely above zero, `harms` entirely below, `no-effect` an
@@ -674,9 +740,11 @@ Each of these exits 2 and spends nothing:
   `model`/`judge_model`/`reps` in `nullbench.json` moves `H` (§3), and the refusal names
   what changed. Updating a task's declared `sha256` to match does not help: `H` is over
   the bytes on disk.
-- **A different requested config** — model, judge model, reps, task set, or skill
-  override — even where `H` would allow it, because the carried records were produced
-  under the earlier one.
+- **A different requested config** — model, judge model, reps, task set, skill
+  override, or backend (`NULLBENCH_CLAUDE_BIN`, §7) — even where `H` would allow it,
+  because the carried records were produced under the earlier one. The backend matters
+  most: the registered model name does not change when an adapter answers instead, so
+  a batch spliced across two backends would read as one.
 - **A run that has already been resumed.** Resuming the same run twice would draw its
   dead cells twice and let the second draw replace the first. Resume the resume instead;
   the chain may be as long as needed.

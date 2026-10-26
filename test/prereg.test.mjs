@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync, readFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync, readFileSync, symlinkSync, cpSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { canonicalJSON } from "../src/canonical.mjs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadRegistration, RegistrationError, patternDrift } from "../src/prereg.mjs";
@@ -343,4 +345,175 @@ test("a malformed task entry is a RegistrationError, not a TypeError escaping as
     );
   }
   rmSync(dir, { recursive: true, force: true });
+});
+
+// h_version 2: fixture contents and canaries.json enter H. v1 (the default) is left
+// byte-identical so no existing registration's H moves.
+function makeFixtureSuite({ hVersion } = {}) {
+  const dir = mkdtempSync(join(tmpdir(), "nb-hv2-"));
+  mkdirSync(join(dir, "tasks"));
+  mkdirSync(join(dir, "fx", "src"), { recursive: true });
+  writeFileSync(join(dir, "fx", "package.json"), '{"name":"fx"}');
+  writeFileSync(join(dir, "fx", "src", "a.js"), "export const a = 1;\n");
+  writeFileSync(join(dir, "SKILL.md"), "# demo\n");
+  const sig = JSON.stringify({ id: "sig", kind: "signal", prompt: "p", fixture: "fx", verify: { type: "judge", rubric: "R" } });
+  const sig2 = JSON.stringify({ id: "sig2", kind: "signal", prompt: "q", fixture: "fx", verify: { type: "judge", rubric: "R2" } });
+  const harm = JSON.stringify({ id: "harm", kind: "harm", prompt: "h", verify: { type: "none", patterns: ["x"], maxWords: 500 } });
+  writeFileSync(join(dir, "tasks", "sig.json"), sig);
+  writeFileSync(join(dir, "tasks", "sig2.json"), sig2);
+  writeFileSync(join(dir, "tasks", "harm.json"), harm);
+  const reg = {
+    model: "sonnet", judge_model: "sonnet", reps: 10,
+    tasks: [
+      { id: "sig", file: "tasks/sig.json", sha256: sha(sig), kind: "signal", predict: "helps" },
+      { id: "sig2", file: "tasks/sig2.json", sha256: sha(sig2), kind: "signal", predict: "helps" },
+      { id: "harm", file: "tasks/harm.json", sha256: sha(harm), kind: "harm", predict: "no-effect" },
+    ],
+  };
+  if (hVersion !== undefined) reg.h_version = hVersion;
+  writeFileSync(join(dir, "nullbench.json"), JSON.stringify(reg));
+  writeFileSync(join(dir, "canaries.json"), JSON.stringify({ sig: [{ label: "a", reply: "r", expect: "PASS" }] }));
+  return dir;
+}
+
+test("h_version absent and h_version 1 give the same H, which does not cover fixtures or canaries", () => {
+  const a = makeFixtureSuite();
+  const b = makeFixtureSuite({ hVersion: 1 });
+  const h = loadRegistration(a).hash;
+  assert.equal(loadRegistration(b).hash, h);
+  assert.equal(loadRegistration(a).hVersion, 1);
+  writeFileSync(join(a, "fx", "src", "a.js"), "export const a = 2;\n");
+  writeFileSync(join(a, "canaries.json"), JSON.stringify({ sig: [{ label: "a", reply: "r", expect: "FAIL" }] }));
+  assert.equal(loadRegistration(a).hash, h, "v1 is the documented gap: neither edit moves it");
+  for (const d of [a, b]) rmSync(d, { recursive: true, force: true });
+});
+
+test("h_version 2: editing any fixture file moves H, and so does renaming one", () => {
+  const dir = makeFixtureSuite({ hVersion: 2 });
+  const h0 = loadRegistration(dir).hash;
+  assert.notEqual(h0, loadRegistration(makeFixtureSuite()).hash, "v2 is a different H from v1");
+  writeFileSync(join(dir, "fx", "src", "a.js"), "export const a = 2;\n");
+  const h1 = loadRegistration(dir).hash;
+  assert.notEqual(h1, h0, "a nested fixture file's bytes are covered");
+  writeFileSync(join(dir, "fx", "src", "a.js"), "export const a = 1;\n");
+  assert.equal(loadRegistration(dir).hash, h0, "restoring the bytes restores H");
+  writeFileSync(join(dir, "fx", "src", "b.js"), "export const a = 1;\n");
+  rmSync(join(dir, "fx", "src", "a.js"));
+  assert.notEqual(loadRegistration(dir).hash, h0, "a rename is covered: paths are in the manifest");
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("h_version 2: editing, adding or removing canaries.json moves H", () => {
+  const dir = makeFixtureSuite({ hVersion: 2 });
+  const h0 = loadRegistration(dir).hash;
+  writeFileSync(join(dir, "canaries.json"), JSON.stringify({ sig: [{ label: "a", reply: "r", expect: "FAIL" }] }));
+  const h1 = loadRegistration(dir).hash;
+  assert.notEqual(h1, h0);
+  rmSync(join(dir, "canaries.json"));
+  const h2 = loadRegistration(dir).hash;
+  assert.notEqual(h2, h1);
+  assert.notEqual(h2, h0);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+// Pinned by independent construction, not by a literal captured from the code under
+// test: the expected body is rebuilt here from PROTOCOL §3/§3.1 alone. This pins the key
+// names and shape (so a silent change to either would fail), and -- because two tasks
+// share "fx" -- that a shared fixture appears in `fixtures` exactly once.
+function expectedHash(dir, hVersion) {
+  const reg = JSON.parse(readFileSync(join(dir, "nullbench.json"), "utf8"));
+  const tasks = reg.tasks.map((t) => ({ id: t.id, kind: t.kind, predict: t.predict, sha256: sha(readFileSync(join(dir, t.file))) }))
+    .sort((a, b) => (a.id < b.id ? -1 : 1));
+  const body = { model: "sonnet", judge_model: "sonnet", reps: 10, skill_sha256: sha(readFileSync(join(dir, "SKILL.md"))), tasks };
+  if (hVersion === 2) {
+    const manifest = [
+      { path: "package.json", sha256: sha(readFileSync(join(dir, "fx", "package.json"))) },
+      { path: "src/a.js", sha256: sha(readFileSync(join(dir, "fx", "src", "a.js"))) },
+    ];
+    body.h_version = 2;
+    body.fixtures = [{ name: "fx", sha256: sha(canonicalJSON(manifest)) }];
+    body.canaries_sha256 = sha(readFileSync(join(dir, "canaries.json")));
+  }
+  return sha(canonicalJSON(body));
+}
+
+test("pinned: v1 and v2 H match an independent construction from PROTOCOL §3/§3.1", () => {
+  const v1 = makeFixtureSuite();
+  const v2 = makeFixtureSuite({ hVersion: 2 });
+  assert.equal(loadRegistration(v1).hash, expectedHash(v1, 1));
+  assert.equal(loadRegistration(v2).hash, expectedHash(v2, 2), "one fixtures entry for fx, although two tasks declare it");
+  for (const d of [v1, v2]) rmSync(d, { recursive: true, force: true });
+});
+
+test("h_version 2: fixture manifest is sorted by full path ('a-b' before 'a/x')", () => {
+  const dir = makeFixtureSuite({ hVersion: 2 });
+  rmSync(join(dir, "fx"), { recursive: true, force: true });
+  mkdirSync(join(dir, "fx", "a"), { recursive: true });
+  writeFileSync(join(dir, "fx", "a", "x"), "1");
+  writeFileSync(join(dir, "fx", "a-b"), "2");
+  const manifest = [{ path: "a-b", sha256: sha("2") }, { path: "a/x", sha256: sha("1") }];
+  const reg = loadRegistration(dir);
+  const expected = (() => {
+    const r = JSON.parse(readFileSync(join(dir, "nullbench.json"), "utf8"));
+    const tasks = r.tasks.map((t) => ({ id: t.id, kind: t.kind, predict: t.predict, sha256: sha(readFileSync(join(dir, t.file))) }))
+      .sort((a, b) => (a.id < b.id ? -1 : 1));
+    return sha(canonicalJSON({ model: "sonnet", judge_model: "sonnet", reps: 10, skill_sha256: sha(readFileSync(join(dir, "SKILL.md"))), tasks,
+      h_version: 2, fixtures: [{ name: "fx", sha256: sha(canonicalJSON(manifest)) }], canaries_sha256: sha(readFileSync(join(dir, "canaries.json"))) }));
+  })();
+  assert.equal(reg.hash, expected);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("h_version 2: a symlink in a fixture, or a symlinked fixture root, is a structural failure", () => {
+  const dir = makeFixtureSuite({ hVersion: 2 });
+  symlinkSync("src/a.js", join(dir, "fx", "link.js"));
+  assert.throws(() => loadRegistration(dir), (e) => e instanceof RegistrationError && /symlink at "link\.js"/.test(e.message));
+  rmSync(join(dir, "fx", "link.js"));
+  const real = join(dir, "fx-real");
+  cpSync(join(dir, "fx"), real, { recursive: true });
+  rmSync(join(dir, "fx"), { recursive: true, force: true });
+  symlinkSync(real, join(dir, "fx"));
+  assert.throws(() => loadRegistration(dir), (e) => e instanceof RegistrationError && /is a symlink/.test(e.message));
+  rmSync(dir, { recursive: true, force: true });
+  const v1 = makeFixtureSuite();
+  symlinkSync("src/a.js", join(v1, "fx", "link.js"));
+  assert.doesNotThrow(() => loadRegistration(v1), "the rule binds only h_version 2");
+  rmSync(v1, { recursive: true, force: true });
+});
+
+test("h_version 2: a FIFO in a fixture is a structural failure, not a hang", () => {
+  const dir = makeFixtureSuite({ hVersion: 2 });
+  execFileSync("mkfifo", [join(dir, "fx", "pipe")]);
+  assert.throws(() => loadRegistration(dir), (e) => e instanceof RegistrationError && /non-regular entry at "pipe"/.test(e.message));
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("h_version 2: a missing fixture hashes as null and a file fixture as its bytes, each distinctly", () => {
+  const dir = makeFixtureSuite({ hVersion: 2 });
+  const asDir = loadRegistration(dir).hash;
+  rmSync(join(dir, "fx"), { recursive: true, force: true });
+  const missing = loadRegistration(dir).hash;
+  writeFileSync(join(dir, "fx"), "a single file");
+  const asFile = loadRegistration(dir).hash;
+  assert.equal(new Set([asDir, missing, asFile]).size, 3);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("h_version 2: a canaries.json that is a directory is a RegistrationError, not a raw EISDIR", () => {
+  const dir = makeFixtureSuite({ hVersion: 2 });
+  rmSync(join(dir, "canaries.json"));
+  mkdirSync(join(dir, "canaries.json"));
+  assert.throws(() => loadRegistration(dir), (e) => e instanceof RegistrationError && /canaries\.json exists but is not a regular file/.test(e.message));
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("an h_version other than 1 or 2 is a structural failure", () => {
+  for (const bad of [0, 3, "2", null]) {
+    const dir = makeFixtureSuite();
+    const reg = JSON.parse(readFileSync(join(dir, "nullbench.json"), "utf8"));
+    reg.h_version = bad;
+    writeFileSync(join(dir, "nullbench.json"), JSON.stringify(reg));
+    assert.throws(() => loadRegistration(dir), RegistrationError, `h_version ${JSON.stringify(bad)}`);
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

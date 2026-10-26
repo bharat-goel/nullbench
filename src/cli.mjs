@@ -2,13 +2,14 @@
 
 import { mkdirSync, writeFileSync, existsSync, renameSync, mkdtempSync, cpSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve, dirname } from "node:path";
+import { join, resolve, dirname, basename } from "node:path";
 import { loadRegistration, patternDrift, RegistrationError } from "./prereg.mjs";
 import { runSuite, gradedCounts } from "./runner.mjs";
 import { runCanaries, loadCanaries } from "./judge.mjs";
 import { classify } from "./classify.mjs";
 import { aggregate, renderReport } from "./report.mjs";
 import { appendEntry } from "./ledger.mjs";
+import { binaryPath } from "./claude.mjs";
 import { distinctiveTermsForSkill, scanControlLeakage, assertIsolated } from "./leakage.mjs";
 import { combinedSkillText, skillFilePaths } from "./skill.mjs";
 import { loadPrior, resumeProblems, partition, mergeCanary, contributions, stampDir } from "./resume.mjs";
@@ -143,6 +144,14 @@ export async function main(argv, { stdout = process.stdout, stdin = process.stdi
     // file's contents, but a reader comparing two reports needs to see that the skill
     // came from somewhere other than the registered location.
     skillOverride,
+    // Set only when NULLBENCH_CLAUDE_BIN replaced the hosted CLI. The model names above
+    // are then the REGISTERED ones, not verified to be what answered: the 2026-09-18
+    // bracket runs were answered by a local gemma model and recorded as "sonnet".
+    // Recorded as the basename: enough to name the adapter, without writing the
+    // operator's home-directory layout into a ledger that gets committed. A bare
+    // `claude` is the hosted CLI itself, not an override.
+    ...(process.env.NULLBENCH_CLAUDE_BIN && process.env.NULLBENCH_CLAUDE_BIN !== "claude"
+      ? { backend: basename(binaryPath()) } : {}),
   };
 
   // Structural, not drift: an unknown id and a missing SKILL.md both mean the run
@@ -275,6 +284,14 @@ export async function main(argv, { stdout = process.stdout, stdin = process.stdi
     `  est. spend    ~$${(p.total * args.costPerCall).toFixed(2)} at an assumed ` +
     `$${args.costPerCall.toFixed(2)}/call — override with --cost-per-call\n`
   );
+  // v1 is the default and stays byte-identical to the H every existing registration was
+  // frozen under -- so say plainly what it does not name, whenever there is something
+  // it could have named.
+  const hasFixture = registration.tasks.some((t) => typeof t.spec?.fixture === "string");
+  if (registration.hVersion === 1 && (hasFixture || existsSync(cPath))) {
+    stdout.write(`  note          H (v1) does not cover ${[hasFixture && "fixture contents", existsSync(cPath) && "canaries.json"].filter(Boolean).join(" or ")}; ` +
+      `set "h_version": 2 in nullbench.json to include them\n`);
+  }
   if (registration.drift.length) {
     stdout.write(`  drift detected — this run cannot be confirmatory:\n`);
     for (const d of registration.drift) stdout.write(`    - ${d.detail}\n`);
@@ -407,7 +424,7 @@ export async function main(argv, { stdout = process.stdout, stdin = process.stdi
     checkpoint.complete = true;
     checkpoint.records = records;
     save();
-    appendEntry(join(dir, "LEDGER.md"), { stamp, klass, hash: registration.hash, requested, rows, reasons: [...reasons, ...warnings], resume: resumeInfo });
+    appendEntry(join(dir, "LEDGER.md"), { stamp, klass, hash: registration.hash, requested, rows, reasons: [...reasons, ...warnings], resume: resumeInfo, canary });
   }
 
   stdout.write(`${md}\n`);

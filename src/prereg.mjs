@@ -11,7 +11,7 @@
 // necessary phase, or let a changed task pass as confirmed, which is the whole thing
 // this project exists to stop.
 
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync, lstatSync } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { canonicalJSON } from "./canonical.mjs";
@@ -46,6 +46,9 @@ export function loadRegistration(dir, skillFile = null) {
   if (!Array.isArray(raw.tasks) || raw.tasks.length === 0) problems.push(`"tasks" must be a non-empty array`);
   if (raw.skill_dir !== undefined && (typeof raw.skill_dir !== "string" || !raw.skill_dir)) {
     problems.push(`"skill_dir" must be a non-empty string`);
+  }
+  if (raw.h_version !== undefined && raw.h_version !== 1 && raw.h_version !== 2) {
+    problems.push(`"h_version" must be 1 or 2 (absent means 1)`);
   }
 
   if (problems.length) throw new RegistrationError(problems);
@@ -133,11 +136,28 @@ export function loadRegistration(dir, skillFile = null) {
   const skillSha = hashSkill(skill);
 
   // Hashed over actual contents, not declared ones, so the hash names what really ran.
-  const body = canonicalJSON({
+  //
+  // h_version 2 (opt-in) also covers every declared fixture's contents and canaries.json.
+  // Version 1 -- the default, and every registration written before this existed --
+  // covers neither: a fixture copied into both arms' sandboxes, or the canary set that
+  // certifies the judge, could be edited after freezing with H unchanged. Folding them
+  // into v1 would move H for every existing fixture- or canary-bearing registration,
+  // including ones whose runs are already published under their H, so the stronger hash
+  // is a new version a registration declares rather than a silent change to the old one.
+  // A v1 body is byte-identical to before h_version existed.
+  const hVersion = raw.h_version ?? 1;
+  const hashed = {
     model: raw.model, judge_model: raw.judge_model, reps: raw.reps,
     skill_sha256: skillSha,
     tasks: tasks.map((t) => ({ id: t.id, kind: t.kind, predict: t.predict, sha256: t.actualSha })),
-  });
+  };
+  if (hVersion === 2) {
+    const fixtureNames = [...new Set(tasks.filter((t) => typeof t.spec?.fixture === "string").map((t) => t.spec.fixture))].sort();
+    hashed.h_version = 2;
+    hashed.fixtures = fixtureNames.map((name) => ({ name, sha256: hashTree(join(dir, name)) }));
+    hashed.canaries_sha256 = hashCanaries(join(dir, "canaries.json"));
+  }
+  const body = canonicalJSON(hashed);
   const hash = sha256(Buffer.from(body, "utf8"));
 
   // Kept separate from `skill` (the resolved descriptor for THIS run) because an
@@ -149,8 +169,67 @@ export function loadRegistration(dir, skillFile = null) {
 
   return {
     config: { model: raw.model, judge_model: raw.judge_model, reps: raw.reps },
-    tasks, hash, drift, skill, skillSha, registeredSkillDir,
+    tasks, hash, hVersion, drift, skill, skillSha, registeredSkillDir,
   };
+}
+
+// canaries.json's bytes (h_version 2 only), or null when there is none. Anything that
+// exists but cannot be read as a file -- a directory, a permissions error -- is a
+// structural failure (exit 2), never a raw exception escaping as exit 1, which is VOID's
+// code.
+function hashCanaries(path) {
+  let st;
+  try { st = lstatSync(path); } catch { return null; }
+  if (!st.isFile()) throw new RegistrationError([`canaries.json exists but is not a regular file; it cannot be hashed`]);
+  try {
+    return sha256(readFileSync(path));
+  } catch (e) {
+    throw new RegistrationError([`canaries.json could not be read for hashing: ${e.message}`]);
+  }
+}
+
+// A fixture's contents, as one hash (h_version 2 only). Same shape as a skill_dir
+// manifest -- `{ path, sha256 }` per regular file, sorted by full path after the walk.
+//
+// A symlink anywhere in a v2 fixture is a structural failure. Recording the link's
+// target string would not cover what the sandbox reads: cpSync rewrites a relative link
+// to an absolute path back into the SOURCE tree, so the run follows it to the live file
+// (possibly outside the fixture altogether), whose bytes H would never see. v1 is left
+// as it was; this rule only binds a registration that asked for the stronger hash.
+//
+// Two non-manifest cases, both documented in §3.1: an absent fixture hashes to null
+// (preflight reports it as structural for any task that runs; a --task run that skips
+// its owner leaves it null in H), and a fixture that is a single regular file hashes as
+// that file's bytes. Empty directories and file modes are not covered, as for skill_dir.
+function hashTree(root) {
+  let rootStat;
+  try { rootStat = lstatSync(root); } catch { return null; }
+  if (rootStat.isSymbolicLink()) {
+    throw new RegistrationError([`fixture "${root}" is a symlink; refused under h_version 2`]);
+  }
+  const entries = [];
+  const walk = (rel) => {
+    const abs = rel ? join(root, rel) : root;
+    for (const name of readdirSync(abs)) {
+      const childRel = rel ? `${rel}/${name}` : name;
+      const childAbs = join(abs, name);
+      const st = lstatSync(childAbs);
+      if (st.isSymbolicLink()) throw new RegistrationError([`fixture contains a symlink at "${childRel}"; refused under h_version 2, because the sandbox would read through it to bytes H does not cover`]);
+      else if (st.isDirectory()) walk(childRel);
+      else if (st.isFile()) entries.push({ path: childRel, sha256: sha256(readFileSync(childAbs)) });
+      else throw new RegistrationError([`fixture contains a non-regular entry at "${childRel}"; it cannot be hashed`]);
+    }
+  };
+  try {
+    if (rootStat.isFile()) return sha256(readFileSync(root));
+    if (!rootStat.isDirectory()) throw new RegistrationError([`fixture "${root}" is neither a file nor a directory; it cannot be hashed`]);
+    walk("");
+  } catch (e) {
+    if (e instanceof RegistrationError) throw e;
+    throw new RegistrationError([`fixture "${root}" could not be read for hashing: ${e.message}`]);
+  }
+  entries.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  return sha256(Buffer.from(canonicalJSON(entries), "utf8"));
 }
 
 // Verifier patterns lifted verbatim out of SKILL.md.

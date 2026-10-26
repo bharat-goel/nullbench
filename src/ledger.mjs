@@ -26,7 +26,7 @@ function score(row) {
   return !above && !below ? "HIT" : "MISS";
 }
 
-export function appendEntry(path, { stamp, klass, hash, requested, rows, reasons, resume = null }) {
+export function appendEntry(path, { stamp, klass, hash, requested, rows, reasons, resume = null, canary = null }) {
   if (!existsSync(path)) {
     writeFileSync(path, HEADING);
   } else {
@@ -42,7 +42,11 @@ export function appendEntry(path, { stamp, klass, hash, requested, rows, reasons
   // (usually VOID) stays exactly as it was, and this one links back to it.
   L.push(`## ${stamp} · ${klass} · H=${hash.slice(0, 16)}${resume ? ` · resumes ${resume.of}` : ""}`);
   L.push("```");
-  L.push(`model=${requested.model} judge=${requested.judgeModel} reps=${requested.reps}`);
+  // backend= only when NULLBENCH_CLAUDE_BIN overrode the CLI: the model names above are
+  // the registered ones, and without this line a ledger entry for a run answered by a
+  // local model is indistinguishable from one answered by the hosted model it names.
+  L.push(`model=${requested.model} judge=${requested.judgeModel} reps=${requested.reps}` +
+    (requested.backend ? ` backend=${/[\s"]/.test(requested.backend) ? JSON.stringify(requested.backend) : requested.backend}` : ""));
   if (resume) {
     L.push(`resume: of=${resume.of} origin=${resume.origin} reattempted=${resume.reattempted} canaries=re-run`);
     L.push(`contributing: ${resume.contributions.map((c) => `${c.stamp} (${c.graded} graded)`).join(", ")}`);
@@ -63,6 +67,9 @@ export function appendEntry(path, { stamp, klass, hash, requested, rows, reasons
       : `average across discriminating signal tasks: ${pp(avg.value)} (no interval — see per-task rows)`);
   }
   for (const r of reasons) L.push(`note: ${r}`);
+  for (const m of canary?.misgrades ?? []) {
+    if (m.id !== "missing") L.push(`canary misgraded: ${m.id} (expected ${m.expected}, judge said ${m.got})`);
+  }
   L.push("```");
   L.push("");
 

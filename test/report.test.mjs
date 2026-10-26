@@ -168,3 +168,51 @@ test("harm tasks are excluded from the average even when discriminating", () => 
   // Average should be (0.7 + 0.7) / 2 = 0.7, not (0.7 + 0.7 + 1.0) / 3 = 0.8333...
   assert.ok(Math.abs(avg.value - 0.7) < 1e-9, "average should exclude harm task");
 });
+
+const canaryWithMisgrade = {
+  ok: false, total: 3, graded: 3, dead: [],
+  misgrades: [{ id: "sig:plain-words", expected: "FAIL", got: "PASS", why: "The reply\n paraphrases well." }],
+};
+
+test("an exploratory report names each misgraded canary, not just the count", () => {
+  const md = renderReport({
+    rows: aggregate(records(), tasks), klass: "EXPLORATORY",
+    reasons: ["judge canaries misgraded; judged tasks cannot be confirmed"],
+    requested: { reps: 10, model: "sonnet", judgeModel: "sonnet" }, hash: "c".repeat(64),
+    canary: canaryWithMisgrade,
+  });
+  assert.match(md, /Judge canaries: 2\/3 graded correctly\./);
+  assert.match(md, /misgraded `sig:plain-words`: expected FAIL, judge said PASS — judge: The reply paraphrases well\./);
+});
+
+test("a VOID report still names the misgraded canaries it paid for", () => {
+  const md = renderReport({
+    rows: [], klass: "VOID", reasons: ['task "sig" control: 0 graded runs, 8 required'],
+    requested: { reps: 10, model: "sonnet", judgeModel: "sonnet" }, hash: "d".repeat(64),
+    canary: { ...canaryWithMisgrade, dead: [{ id: "sig:other", why: "session limit" }] },
+  });
+  assert.match(md, /## Judge canaries/);
+  assert.match(md, /misgraded `sig:plain-words`/);
+  assert.match(md, /never answered `sig:other`/);
+  assert.doesNotMatch(md, /\| Task \|/, "a VOID report still prints no per-task table");
+});
+
+test("the header names a NULLBENCH_CLAUDE_BIN backend when one answered", () => {
+  const req = { reps: 10, model: "sonnet", judgeModel: "sonnet" };
+  const plain = renderReport({ rows: aggregate(records(), tasks), klass: "CONFIRMATORY", reasons: [], requested: req, hash: "e".repeat(64), canary: null });
+  assert.doesNotMatch(plain, /backend/);
+  const local = renderReport({ rows: aggregate(records(), tasks), klass: "CONFIRMATORY", reasons: [], requested: { ...req, backend: "/x/local-claude.mjs" }, hash: "e".repeat(64), canary: null });
+  assert.match(local, /backend `\/x\/local-claude\.mjs` \(NULLBENCH_CLAUDE_BIN override/);
+});
+
+test("a judge reason already prefixed 'judge:' is not printed twice; dead canaries are not counted correct", () => {
+  const md = renderReport({
+    rows: aggregate(records(), tasks), klass: "EXPLORATORY", reasons: ["x"],
+    requested: { reps: 10, model: "sonnet", judgeModel: "sonnet" }, hash: "f".repeat(64),
+    canary: { ok: false, total: 4, graded: 3, dead: [{ id: "sig:gone", why: "judge failed to run" }],
+      misgrades: [{ id: "sig:a", expected: "FAIL", got: "PASS", why: "judge: fine" }] },
+  });
+  assert.match(md, /— judge: fine/);
+  assert.doesNotMatch(md, /judge: judge:/);
+  assert.match(md, /Judge canaries: 2\/3 graded correctly; 1 of 4 never answered\./);
+});
