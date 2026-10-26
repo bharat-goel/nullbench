@@ -1,6 +1,7 @@
 # The live bracket
 
-**Status: both arms run and passed**, on a local `gemma-4-12b-qat`, 2026-09-18.
+**Status: both arms run and passed**, on a local `gemma-4-12b-qat` (2026-09-18) and on
+hosted Sonnet via the real `claude` CLI (2026-09-24). Same intervals on both.
 
 | Arm | Result | Required |
 |---|---|---|
@@ -13,7 +14,10 @@ so that arm alone establishes nothing; the known-positive arm is what rules it o
 `npm run verify:live` passes both arms in one invocation — 2 tests, 2 passed, 48.5
 minutes — with intervals byte-identical to an earlier pair of separate per-arm runs.
 
-One limit on the claim: neither arm has run against a hosted model.
+The hosted run: `NULLBENCH_CLAUDE_BIN` unset, default concurrency, 2 tests, 2 passed,
+168.6 seconds, 0 dead runs in either arm. Its ledger entries (2026-09-24) and the local
+ones (2026-09-18) both read `model=sonnet`: the ledger records the registered model name,
+not the backend that answered, so this file is where the backend is recorded.
 
 An earlier attempt at the known-positive arm came back VOID — LM Studio dropped
 connections at the default concurrency of 4, `fetch failed` on 39 of 40 calls. That was

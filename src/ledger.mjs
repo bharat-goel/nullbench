@@ -26,7 +26,7 @@ function score(row) {
   return !above && !below ? "HIT" : "MISS";
 }
 
-export function appendEntry(path, { stamp, klass, hash, requested, rows, reasons, canary = null }) {
+export function appendEntry(path, { stamp, klass, hash, requested, rows, reasons, resume = null, canary = null }) {
   if (!existsSync(path)) {
     writeFileSync(path, HEADING);
   } else {
@@ -38,13 +38,20 @@ export function appendEntry(path, { stamp, klass, hash, requested, rows, reasons
 
   const L = [];
   L.push("");
-  L.push(`## ${stamp} · ${klass} · H=${hash.slice(0, 16)}`);
+  // A resume is its own entry, never an edit to the one it resumes: the earlier entry
+  // (usually VOID) stays exactly as it was, and this one links back to it.
+  L.push(`## ${stamp} · ${klass} · H=${hash.slice(0, 16)}${resume ? ` · resumes ${resume.of}` : ""}`);
   L.push("```");
   // backend= only when NULLBENCH_CLAUDE_BIN overrode the CLI: the model names above are
   // the registered ones, and without this line a ledger entry for a run answered by a
   // local model is indistinguishable from one answered by the hosted model it names.
   L.push(`model=${requested.model} judge=${requested.judgeModel} reps=${requested.reps}` +
     (requested.backend ? ` backend=${/[\s"]/.test(requested.backend) ? JSON.stringify(requested.backend) : requested.backend}` : ""));
+  if (resume) {
+    L.push(`resume: of=${resume.of} origin=${resume.origin} reattempted=${resume.reattempted} canaries=re-run`);
+    L.push(`contributing: ${resume.contributions.map((c) => `${c.stamp} (${c.graded} graded)`).join(", ")}`);
+    if (!resume.priorComplete) L.push(`note: ${resume.of} never completed and has no ledger entry of its own; its graded runs are counted here`);
+  }
   for (const r of rows) {
     const note = r.discriminating ? "" : "  (non-discriminating)";
     L.push(

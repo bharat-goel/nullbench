@@ -51,6 +51,21 @@ its content hash, its kind, and a prediction:
 At least one `harm` task is required for a CONFIRMATORY stamp. Without a negative control,
 the cheapest way for any skill to pass its own evaluation is to fire on everything.
 
+If a batch dies partway through — a plan's session limit is the usual cause — resume it
+instead of paying for all of it again:
+
+```bash
+node bin/nullbench.mjs ./my-suite --resume 2026-09-24T18:02:11Z
+```
+
+Only the runs that produced no answer are re-attempted; every graded run, pass or fail, is
+carried forward unchanged. The resume is refused if a task file, the skill (any file in it) or
+`nullbench.json` changed, or if the model, judge model or reps differ. The canaries are
+re-run in full, the ledger gets a separate entry linked to the original, and the report
+names every run that contributed records. `records.json` is checkpointed after every
+record, so a killed process loses nothing it had already graded. Rules:
+[`PROTOCOL.md` §10](PROTOCOL.md#10-resuming-an-interrupted-batch).
+
 A skill that's more than one file — `SKILL.md` plus reference material it loads on
 demand — registers `"skill_dir": "<relative dir>"` instead of relying on the bare
 `SKILL.md` fallback; the whole directory is copied into the treatment arm's sandbox and
@@ -106,6 +121,8 @@ registration was.
   and the flat ones, from a `finally` block with no path around it.
 - A verifier pattern lifted verbatim out of your own `SKILL.md`. Caught at preflight,
   before you spend anything.
+- A re-drawn graded run. `--resume` re-attempts only runs that never answered, refuses a
+  changed registration, and refuses to resume the same run twice.
 
 ## What has actually been run
 
@@ -113,9 +130,9 @@ Claims here are load-bearing, so they are itemised.
 
 | | Status |
 |---|---|
-| Protocol logic | **138 offline tests**, no network, no API key, stub `claude` binary |
+| Protocol logic | **148 offline tests**, no network, no API key, stub `claude` binary |
 | Worked example (`examples/cobra/`) | **run on Sonnet**, 2026-09-18 — 173 invocations, canaries 13/13, CONFIRMATORY |
-| Live bracket (`npm run verify:live`) | **2/2 passed** on a local `gemma-4-12b-qat` |
+| Live bracket (`npm run verify:live`) | **2/2 passed** on a local `gemma-4-12b-qat` (2026-09-18) and on hosted Sonnet (2026-09-24) |
 
 The bracket is the guarantee that the runner separates signal from noise. Its placebo arm
 (an irrelevant skill) returned `+0.0pp [-27.8pp, +27.8pp]`, spanning zero. Its
@@ -123,8 +140,8 @@ known-positive arm (a mechanically detectable one) returned `+100.0pp [+60.7pp, 
 excluding it. Both arms are needed: a harness that always reports null passes the placebo
 arm perfectly.
 
-**The bracket has only run against a 12B local model.** That establishes the machinery
-works there. It says nothing about a hosted model.
+**The bracket has run on two models: a 12B local model and hosted Sonnet.** It says
+nothing about other hosted models, and each arm is one batch.
 
 ## What nullbench does not do
 

@@ -178,6 +178,12 @@ test("--concurrency is parsed and validated", () => {
   assert.throws(() => parseArgs([".", "--concurrency"]), /requires a value/);
 });
 
+test("--resume takes a value and a bare --resume is refused, not ignored", () => {
+  assert.equal(parseArgs(["bench", "--resume", "2026-09-18T21:41:48Z"]).resume, "2026-09-18T21:41:48Z");
+  assert.equal(parseArgs(["bench"]).resume, null);
+  assert.throws(() => parseArgs(["bench", "--resume"]), /--resume requires a value/);
+});
+
 // A declared fixture that assertIsolated would refuse at run time (cli.mjs ~150-160
 // only checked existence and a top-level "skill" collision) used to pass --dry-run
 // clean, get its judge canaries paid for, then abort the whole batch the moment
