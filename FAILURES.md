@@ -225,6 +225,14 @@ toward 0%, and printed a tight near-zero delta that passed the graded-run floor.
 judge and a confident null are indistinguishable in the output, which is the whole
 mechanism of this entry, one layer down.
 
+VOID used to have a cost this entry did not mention: the only remedy was the whole batch
+again. A session limit that lands on the last task of a 398-call suite voids all 398, and
+the retry repays them all. That is exactly the pressure that makes an author reach for a
+shortcut: count the dead runs, or quote the batch anyway. `--resume` (`PROTOCOL.md` §10)
+removes that pressure without touching the rule. Dead runs are still excluded, never
+scored, and the floor applies to the combined records. What changes is that only the dead
+cells are paid for twice.
+
 ### 9. Unexplained batch variance
 
 **What it looks like from the inside.** You have one batch that disagrees with its
@@ -343,6 +351,16 @@ record automatic for an author who keeps it, and does nothing at all against one
 does not — there is no trusted registrar here, only a file, and `ATTRIBUTION.md` says
 the same thing about the adaptation this entry comes from. Claiming **caught** would be
 this entry's own failure: publishing the number that flatters the tool.
+
+`--resume` (`PROTOCOL.md` §10) is the one place nullbench itself re-runs anything, so it
+is built to leave this entry no worse. It re-attempts only runs that never answered, and
+never a graded run, pass or fail, because re-running observations until they look better
+is this entry by another name. It refuses a changed registration hash or config, and
+refuses to resume the same run twice, so a batch's dead cells get one draw, not a choice
+of draws. The resume appends its own ledger entry linked to the one it resumes, which is
+never edited, and every report names each run that contributed records. The same caveat
+applies to all of it: the double-resume check reads `results/`, and deleting a results
+directory defeats it exactly as deleting `LEDGER.md` defeats the ledger.
 
 ---
 

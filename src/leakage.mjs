@@ -86,11 +86,15 @@ export function scanControlLeakage({ rawDir, terms, threshold = 0.5 }) {
   // Match only files with the exact shape: *__control__<digits>.txt
   // This prevents collisions with .bak files or task ids containing __control__ substring
   const files = readdirSync(rawDir).filter((f) => /.*__control__\d+\.txt$/.test(f));
-  let hits = 0;
+  let hits = 0, checked = 0;
   for (const f of files) {
     const text = readFileSync(join(rawDir, f), "utf8").toLowerCase();
+    // A dead run's raw file holds stderr, not a reply. Counting it as "checked" dilutes
+    // the rate -- badly across a resumed batch, whose earlier raw dirs can be mostly dead.
+    if (text.startsWith("<<no output>>")) continue;
+    checked += 1;
     if (terms.some((t) => text.includes(t))) hits += 1;
   }
-  const rate = files.length ? hits / files.length : 0;
-  return { checked: files.length, hits, rate, suspicious: rate >= threshold };
+  const rate = checked ? hits / checked : 0;
+  return { checked, hits, rate, suspicious: rate >= threshold };
 }

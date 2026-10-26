@@ -119,7 +119,7 @@ export function loadRegistration(dir, skillFile = null) {
   });
   const hash = sha256(Buffer.from(body, "utf8"));
 
-  return { config: { model: raw.model, judge_model: raw.judge_model, reps: raw.reps }, tasks, hash, drift };
+  return { config: { model: raw.model, judge_model: raw.judge_model, reps: raw.reps }, tasks, hash, drift, skillSha };
 }
 
 // Verifier patterns lifted verbatim out of SKILL.md.

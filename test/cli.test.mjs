@@ -177,3 +177,9 @@ test("--concurrency is parsed and validated", () => {
   assert.throws(() => parseArgs([".", "--concurrency", "0"]), /positive integer/);
   assert.throws(() => parseArgs([".", "--concurrency"]), /requires a value/);
 });
+
+test("--resume takes a value and a bare --resume is refused, not ignored", () => {
+  assert.equal(parseArgs(["bench", "--resume", "2026-09-18T21:41:48Z"]).resume, "2026-09-18T21:41:48Z");
+  assert.equal(parseArgs(["bench"]).resume, null);
+  assert.throws(() => parseArgs(["bench", "--resume"]), /--resume requires a value/);
+});
