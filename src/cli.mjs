@@ -9,6 +9,7 @@ import { runCanaries, loadCanaries } from "./judge.mjs";
 import { classify } from "./classify.mjs";
 import { aggregate, renderReport } from "./report.mjs";
 import { appendEntry } from "./ledger.mjs";
+import { rubricVocabulary } from "./rubric.mjs";
 import { binaryPath } from "./claude.mjs";
 import { distinctiveTermsForSkill, scanControlLeakage, assertIsolated } from "./leakage.mjs";
 import { combinedSkillText, skillFilePaths } from "./skill.mjs";
@@ -233,6 +234,16 @@ export async function main(argv, { stdout = process.stdout, stdin = process.stdi
       registration.tasks, combinedSkillText(skill), skill.kind === "dir" ? "skill_dir" : "SKILL.md"));
   } catch { /* unreadable SKILL.md: reported by the post-run scan, as before */ }
 
+  // The same answer key can sit in a judge rubric, where patternDrift cannot see it. A
+  // warning rather than drift -- see rubric.mjs for why -- printed here, before any
+  // spend, and carried into the report and ledger. Only the tasks this run will grade.
+  const preflightWarnings = [];
+  try {
+    preflightWarnings.push(...rubricVocabulary(
+      registration.tasks.filter((t) => requested.taskIds.includes(t.id)), combinedSkillText(skill),
+      { fixtureRoot: dir, sourceLabel: skill.kind === "dir" ? "skill_dir" : "SKILL.md" }).map((w) => w.detail));
+  } catch { /* unreadable SKILL.md: as above */ }
+
   // Canaries are loaded (and validated) here, before the dry-run return, not just
   // before they are run. A broken canaries.json -- one that still carries cobra's
   // "_comment" key, say -- would otherwise pass a free dry run and only abort once the
@@ -295,6 +306,10 @@ export async function main(argv, { stdout = process.stdout, stdin = process.stdi
   if (registration.drift.length) {
     stdout.write(`  drift detected — this run cannot be confirmatory:\n`);
     for (const d of registration.drift) stdout.write(`    - ${d.detail}\n`);
+  }
+  if (preflightWarnings.length) {
+    stdout.write(`  warnings (the run can still be confirmatory):\n`);
+    for (const w of preflightWarnings) stdout.write(`    - ${w}\n`);
   }
   if (args.dryRun) return 0;
   if (!args.yes && !(await confirm(stdin, stdout, "Proceed? [y/N] "))) {
@@ -397,7 +412,7 @@ export async function main(argv, { stdout = process.stdout, stdin = process.stdi
   // append runs in `finally` so a crash cannot quietly delete a run from the record --
   // the file drawer is the failure this project is named after.
   let md = `# nullbench report — ${klass}\n\n(report rendering failed; see records.json)\n`;
-  const warnings = [];
+  const warnings = [...preflightWarnings];
   try {
     // combinedSkillText's return value isn't used here -- distinctiveTermsForSkill
     // re-reads every file itself, per-file, so frontmatter stripping isn't lost the way
