@@ -260,6 +260,34 @@ test("GAMING: a verifier pattern lifted from SKILL.md is drift, flagged before a
   assert.match(run.text(), /EXPLORATORY/, "a skill-lifted pattern must block CONFIRMATORY");
 });
 
+// RUBRIC_TERM_IN_SKILL -- the same failure with a judge rubric in place of a pattern.
+// skill-audit's uap-release-analyzer run: rubrics passing a reply only if it named the
+// skill's own scripts carried 29 of 34 extra treatment passes, and PATTERN_IN_SKILL could
+// not see them because there was no pattern to check. A warning, not drift: a rubric
+// naming a skill-taught API can be a legitimate test of a reference skill, so the reader
+// is told, and the class is left alone.
+test("GAMING: a judge rubric naming a file only the skill teaches is warned about before any spend, and in the report and ledger", async () => {
+  const rubricTask = { id: "jboot", kind: "signal", prompt: "how do I get from a download to a report",
+    verify: { type: "judge", rubric: "RUBRIC TEXT. PASS if the reply says to run scripts/run_all.py." } };
+  const dir = makeSuite({ tasks: [rubricTask, HARM] });
+  writeFileSync(join(dir, "SKILL.md"), "# demo skill\nRun scripts/run_all.py on the release root.");
+  useStub(dir, {
+    rules: [{ promptIncludes: "RUBRIC TEXT", arm: "any", outs: ["VERDICT: PASS\nREASON: fine"] }],
+    default: { outs: ["a plain reply"] },
+  });
+
+  const dry = capture();
+  assert.equal(await main([dir, "--dry-run"], dry), 0);
+  assert.match(dry.text(), /task "jboot" rubric grades term\(s\) found in SKILL\.md/);
+  assert.match(dry.text(), /scripts\/run_all\.py/);
+  assert.doesNotMatch(dry.text(), /drift detected/, "a rubric term is a warning, never drift");
+
+  const run = capture();
+  await main([dir, "--yes"], run);
+  assert.match(run.text(), /task "jboot" rubric grades term/, "the report carries the warning");
+  assert.match(ledger(dir), /task "jboot" rubric grades term/, "and so does the ledger");
+});
+
 test("GAMING: a harm task's `none` pattern may name the skill's vocabulary without being flagged", async () => {
   // The vocabulary-leak negative control is the shape this project recommends: a harm
   // task asserting the skill does not inject its own words into an unrelated answer MUST

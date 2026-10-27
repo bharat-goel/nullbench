@@ -158,6 +158,16 @@ no longer match its declared `sha256` (`HASH_MISMATCH`), or a suite with no `har
 (`NO_HARM_TASK`). The run proceeds and is classed EXPLORATORY. Drift is printed at
 preflight, before any spend.
 
+**Warning** — something the reader should weigh, but that a heuristic cannot settle: a
+signal task's judge rubric that grades a term found in the skill and in neither the
+task's prompt nor its fixture (`RUBRIC_TERM_IN_SKILL`; FAILURES.md entry 1). Terms are
+identifier-like only — file names, paths, package specifiers, snake/camel/Pascal-case
+names, dotted members, backticked spans — so a rubric that asks for a fact in the
+skill's prose is not caught, and a term the rubric *forbids* is listed too. A warning is
+printed at preflight, before any spend, and carried into the report and ledger. It
+never changes the class: grading a reference skill's API names can be the legitimate
+point of the test, and only the reader can tell which it is.
+
 Collapsing these two would either block exploratory work, which is a legitimate and
 necessary phase, or let a changed task pass as confirmed, which is the thing this project
 exists to stop.
