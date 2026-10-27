@@ -288,6 +288,44 @@ test("GAMING: a judge rubric naming a file only the skill teaches is warned abou
   assert.match(ledger(dir), /task "jboot" rubric grades term/, "and so does the ledger");
 });
 
+// FAILURES.md entry 14 / nullbench#11. Headless -p refuses Write, Edit and Bash, so a task
+// that hands the subject a project and grades the code it produces often gets back "I
+// couldn't write the file" with no code in it, in both arms. skill-audit's cds-code run:
+// 42 of 50 control and 31 of 50 treatment replies had no code block. Nothing in the
+// registration says whether a task needs a write, so this is disclosure, not a gate.
+test("HEADLESS WRITES: a judge-graded task with a fixture is warned about before any spend; others are not", async () => {
+  const fixtured = { id: "jfx", kind: "signal", prompt: "add a profile card to this app", fixture: "proj",
+    verify: { type: "judge", rubric: "RUBRIC TEXT. PASS if the reply's code renders a card." } };
+  const judgedBare = { id: "jbare", kind: "signal", prompt: "write a debounce helper",
+    verify: { type: "judge", rubric: "RUBRIC TEXT. PASS if the code debounces." } };
+  const patternFx = { ...SIGNAL, id: "pfx", fixture: "proj" };
+  const dir = makeSuite({ tasks: [fixtured, judgedBare, patternFx, HARM] });
+  mkdirSync(join(dir, "proj"));
+  writeFileSync(join(dir, "proj", "package.json"), "{}");
+  useStub(dir, {
+    rules: [{ promptIncludes: "RUBRIC TEXT", arm: "any", outs: ["VERDICT: PASS\nREASON: fine"] }],
+    default: { outs: ["a plain reply"] },
+  });
+
+  const dry = capture();
+  assert.equal(await main([dir, "--dry-run"], dry), 0);
+  const line = dry.text().split("\n").find((l) => /refuse Write, Edit and Bash/.test(l));
+  assert.ok(line, `expected a headless-write warning in:\n${dry.text()}`);
+  assert.match(line, /"jfx"/);
+  assert.doesNotMatch(line, /"jbare"|"pfx"/, "only judge-graded tasks that declare a fixture");
+  assert.match(line, /FAILURES\.md entry 14/);
+  assert.doesNotMatch(dry.text(), /drift detected/);
+
+  // --task excluding it: a warning about a task this run does not grade is noise.
+  const only = capture();
+  assert.equal(await main([dir, "--dry-run", "--task", "jbare"], only), 0);
+  assert.doesNotMatch(only.text(), /refuse Write, Edit and Bash/);
+
+  const run = capture();
+  await main([dir, "--yes"], run);
+  assert.match(ledger(dir), /refuse Write, Edit and Bash/);
+});
+
 test("GAMING: a harm task's `none` pattern may name the skill's vocabulary without being flagged", async () => {
   // The vocabulary-leak negative control is the shape this project recommends: a harm
   // task asserting the skill does not inject its own words into an unrelated answer MUST

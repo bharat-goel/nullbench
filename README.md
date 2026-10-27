@@ -91,9 +91,9 @@ Every one of those mistakes was made by someone actively trying to measure hones
 the verifier code in front of him. That is the problem worth solving: the failure modes are
 not visible from the inside, and the tooling does nothing to surface them.
 
-**[`FAILURES.md`](FAILURES.md) is the catalog of thirteen of them, with what each one cost.
+**[`FAILURES.md`](FAILURES.md) is the catalog of fourteen of them, with what each one cost.
 If you read one thing here, read that** — it is useful whether or not you ever install this.
-Three of the thirteen are marked **open**, because they are.
+Four of the fourteen are marked **open**, because they are.
 
 ## The three report classes
 
@@ -171,7 +171,7 @@ It also does not:
 ## Repository
 
 ```
-FAILURES.md        the catalog — thirteen ways an evaluation lies
+FAILURES.md        the catalog — fourteen ways an evaluation lies
 PROTOCOL.md        the normative spec, and the placebo status block
 ATTRIBUTION.md     nothing here is an original idea; this says whose it is
 src/               prereg, runner, verify, judge, stats, ledger, report, cli

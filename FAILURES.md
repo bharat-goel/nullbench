@@ -1,17 +1,16 @@
 # How skill evaluations lie
 
-Thirteen ways a skill evaluation produces a number that is arithmetically correct and
+Fourteen ways a skill evaluation produces a number that is arithmetically correct and
 substantively false. Every one of them was made by someone actively trying to measure
 honestly, with the verifier code in front of them.
 
-**Where the numbers come from.** Every figure in this document was measured by the
+**Where the numbers come from.** Most figures in this document were measured by the
 `cobra` skill's own evaluation harness (`cobra-skill/eval/`, results in
 `eval/RESULTS.md`), not by nullbench. They are cited here as the evidence that these
-failure modes are real and not hypothetical. With one exception, nullbench has not
-reproduced them and does not claim to — the figures below are cobra's harness, not this
-one. The exception is entry 2's `ic-smoke-denominator` cell, which nullbench's own run
-(`examples/cobra/`, Sonnet, 2026-09-18) measured independently and which is marked as
-such where it appears.
+failure modes are real and not hypothetical, and nullbench has not reproduced them and
+does not claim to. Three sets are nullbench's own, and each is marked as such where it
+appears: entry 2's `ic-smoke-denominator` cell (`examples/cobra/`, Sonnet, 2026-09-18),
+and the skill-audit runs cited in entries 1 and 14 (Sonnet, 2026-09-26 onward).
 
 They are also, with one exception, **bare point estimates published without intervals** —
 because that is how they were published, and that is part of what this document is about
@@ -20,7 +19,7 @@ interval has been reconstructed or estimated for any of them. nullbench's own ru
 cannot print a per-task delta without its interval; these predate it.
 
 Each entry ends with what nullbench does about it, marked **caught**, **mitigated**, or
-**open**. Three of thirteen are open. A catalog claiming thirteen for thirteen would
+**open**. Four of fourteen are open. A catalog claiming fourteen for fourteen would
 reproduce the exact failure it documents.
 
 ---
@@ -375,15 +374,47 @@ directory defeats it exactly as deleting `LEDGER.md` defeats the ledger.
 
 ---
 
+## Class 5 — Harness lies: the environment changes the task
+
+### 14. A refused write measured as the skill's answer
+
+**What it looks like from the inside.** The task asks for code in a project, so the suite
+gives it a fixture project to work in. The rubric grades the code. Every run comes back
+with a reply and a verdict, nothing errors, and both arms sit near the floor, which reads
+as a hard task or a weak skill.
+
+**What it cost.** Measured by nullbench itself, not cobra's harness: skill-audit's
+cds-code run (a React component-library skill, a `cds-app` fixture, rubrics over code).
+Headless `-p` refuses Write, Edit and Bash (PROTOCOL.md §7), so the subject usually tried
+to write the component into the fixture, was refused, and replied with a plan and an
+offer to retry. 42 of 50 control replies and 31 of 50 treatment replies contained no
+code block, and the judge failed them for it. The same suite's harm task, which has no
+fixture, got code inline in 19 of 20 replies. The pooled result, +6.0pp against a
+claimed +60pp, mostly measured whether the model pastes code after a refused write — not
+the skill.
+
+**What nullbench does.** **open** — disclosure only. At preflight, before any spend, a
+judge-graded task that declares a fixture gets a warning naming it: headless runs refuse
+writes, so its replies may describe a refused write instead of containing the work, in
+both arms. The warning is carried into the report and ledger and never changes the
+class, because nothing can tell from the registration whether the task needs a write.
+Measuring a skill that delivers its work through files needs the subject to be allowed
+to write inside its own sandbox, and the judge to see what it wrote. That changes what
+is measured, so it would need its own registration field and a component of `H`; it is
+not built.
+
+---
+
 ## What is still open
 
-Three of thirteen are marked **open**: **3** (the judge shares a model family with the
-subject), **9** (unexplained batch variance), and **12** (prereg binds the prediction,
-not the grading criterion). They have disclosure behind them, not mechanism. Entries 5
+Four of fourteen are marked **open**: **3** (the judge shares a model family with the
+subject), **9** (unexplained batch variance), **12** (prereg binds the prediction, not
+the grading criterion), and **14** (a refused write measured as the skill's answer). They have disclosure behind them, not mechanism. Entries 5
 and 6 are partial — a heuristic and a v2 promise respectively.
 
-A reader deciding whether to trust a nullbench report should read those five before the
+A reader deciding whether to trust a nullbench report should read those six before the
 other eight. One thing this catalog could not originally tell you — whether the runner
 enforcing all of it behaves correctly against a real model — has since been checked: see
 the status note in `README.md` and the placebo block in `PROTOCOL.md`. Both arms of the
-live bracket passed, but only on a 12B local model; a hosted model has not been tried.
+live bracket passed on a local `gemma-4-12b-qat` (2026-09-18) and on hosted Sonnet
+(2026-09-24).

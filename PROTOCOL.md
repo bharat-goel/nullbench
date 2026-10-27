@@ -641,6 +641,13 @@ act on it; the measured effect is whatever the instruction achieves through the 
 own reasoning alone, not through the tool it names. A skill this project cannot measure
 fairly is exactly a skill whose value depends on that gap.
 
+The same refusal reaches skills that deliver code. A task that gives the subject a
+fixture project and grades the code it writes often gets back a reply describing a
+refused write, with no code in it, in both arms (FAILURES.md entry 14). The preflight
+warns, before any spend, for every judge-graded task that declares a fixture. It is a
+warning only (§1.2): a task whose prompt says not to modify files is warned about too,
+because the registration cannot say which tasks need a write.
+
 The judge is not tool-restricted, but it never shares the subject's sandbox: it gets its
 own freshly `mkdtemp`'d, isolation-checked directory per call, destroyed immediately
 after. A shared sandbox would let an unrestricted judge invocation read whatever the
